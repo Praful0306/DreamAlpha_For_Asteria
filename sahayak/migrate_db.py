@@ -83,9 +83,16 @@ def get_existing_columns(cur, table: str) -> list:
 
 def run_migration():
     if not os.path.exists(DB_PATH):
-        print(f"ERROR: patients.db not found at {DB_PATH}")
-        print("Make sure you run this script from your project root folder.")
-        sys.exit(1)
+        print(f"patients.db not found — creating fresh database at {DB_PATH}")
+        # Import and create all tables via SQLAlchemy ORM
+        try:
+            from db.database import Base, engine
+            Base.metadata.create_all(bind=engine)
+            print("  [OK]   All tables created from ORM models")
+        except Exception as e:
+            print(f"  [WARN] ORM table creation: {e} — continuing with raw SQLite")
+            # Fallback: just touch the file so sqlite3.connect works
+            sqlite3.connect(DB_PATH).close()
 
     print(f"Running Sahayak AI DB migration on: {DB_PATH}")
     print()
