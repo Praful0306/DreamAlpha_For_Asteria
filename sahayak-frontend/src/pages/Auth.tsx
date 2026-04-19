@@ -13,8 +13,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
-import { signInWithGoogle, storeSession } from "@/lib/auth"
-import { firebaseLogin, emailLogin, registerUser } from "@/lib/api"
+import { signInWithGoogle, signInWithEmail, signUpWithEmail, storeSession } from "@/lib/auth"
+import { supabaseLogin } from "@/lib/api"
 import { useStore } from "@/store/useStore"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -99,22 +99,26 @@ export default function Auth() {
     setMode("login")
   }
 
+  // ── Helper: exchange Supabase token for our backend JWT ─────────────────
+  async function exchangeToken(accessToken: string, userName: string) {
+    const res = await supabaseLogin(accessToken, role!)
+    const displayName = res.full_name ?? res.name ?? userName ?? "User"
+    storeSession(res.access_token, res.role, { name: displayName, id: res.user_id })
+    setAuth({ id: res.user_id, patient_id: res.patient_id ?? null, name: displayName, role: res.role as Role }, res.access_token)
+    toast.success(`Welcome, ${displayName}!`)
+    navigate(ROLE_ROUTES[res.role as Role], { replace: true })
+  }
+
   // ── Google login ─────────────────────────────────────────────────────────
   async function handleGoogle() {
     if (!role) return
-    setLoading(true)
+    // Supabase Google OAuth redirects — handled in callback
     try {
-      const { idToken } = await signInWithGoogle()
-      const res = await firebaseLogin(idToken, role)
-      const displayName = res.full_name ?? res.name ?? "User"
-      storeSession(res.access_token, res.role, { name: displayName, id: res.user_id })
-      setAuth({ id: res.user_id, patient_id: res.patient_id ?? null, name: displayName, role: res.role as Role }, res.access_token)
-      toast.success(`Welcome, ${displayName}!`)
-      navigate(ROLE_ROUTES[res.role as Role], { replace: true })
+      await signInWithGoogle()
+      // Redirect happens automatically; store role for callback to use
+      sessionStorage.setItem("sahayak_pending_role", role)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Google login failed")
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -123,12 +127,9 @@ export default function Auth() {
     if (!role) return
     setLoading(true)
     try {
-      const res = await emailLogin(data.email, data.password)
-      const displayName = res.full_name ?? res.name ?? "User"
-      storeSession(res.access_token, res.role, { name: displayName, id: res.user_id })
-      setAuth({ id: res.user_id, patient_id: res.patient_id ?? null, name: displayName, role: res.role as Role }, res.access_token)
-      toast.success(`Welcome back, ${displayName}!`)
-      navigate(ROLE_ROUTES[res.role as Role], { replace: true })
+      const sbData = await signInWithEmail(data.email, data.password)
+      if (!sbData.session) throw new Error("Login failed — no session returned")
+      await exchangeToken(sbData.session.access_token, sbData.user?.user_metadata?.full_name ?? "")
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Login failed")
     } finally {
@@ -141,13 +142,14 @@ export default function Auth() {
     if (!role) return
     setLoading(true)
     try {
-      const payload = { ...data, role }
-      const res = await registerUser(payload)
-      const displayName = res.full_name ?? res.name ?? data.name ?? "User"
-      storeSession(res.access_token, res.role, { name: displayName, id: res.user_id })
-      setAuth({ id: res.user_id, patient_id: res.patient_id ?? null, name: displayName, role: res.role as Role }, res.access_token)
-      toast.success(`Account created! Welcome, ${displayName}!`)
-      navigate(ROLE_ROUTES[res.role as Role], { replace: true })
+      const sbData = await signUpWithEmail(data.email, data.password, data.name)
+      if (!sbData.session) {
+        // Supabase email confirmation enabled — tell user to check email
+        toast.success("Account created! Check your email to confirm, then log in.")
+        setMode("login")
+        return
+      }
+      await exchangeToken(sbData.session.access_token, data.name)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Registration failed")
     } finally {

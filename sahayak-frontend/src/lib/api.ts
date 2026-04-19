@@ -88,6 +88,9 @@ export interface AuthResponse {
   full_name?: string  // backend uses full_name
 }
 
+export const supabaseLogin = (access_token: string, role: string) =>
+  post<AuthResponse>("/auth/supabase-login", { access_token, role })
+
 export const firebaseLogin = (id_token: string, role: string) =>
   post<AuthResponse>("/auth/firebase-login", { id_token, role })
 

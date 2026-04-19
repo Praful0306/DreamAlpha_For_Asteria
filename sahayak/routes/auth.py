@@ -1,12 +1,12 @@
 """
 Sahayak AI — Authentication routes
-Supports BOTH Firebase Auth (primary) and legacy JWT (fallback).
+Supports Supabase Auth (primary) and legacy JWT (fallback).
 
-Firebase flow:
-  Frontend signs in with Firebase SDK → gets ID token
-  Sends: POST /auth/firebase-login  {id_token, role}
-  Backend verifies token, creates/gets local user record
-  Returns: {user_id, firebase_uid, role, full_name, patient_id}
+Supabase flow:
+  Frontend signs in with Supabase SDK → gets access_token
+  Sends: POST /auth/supabase-login  {access_token, role}
+  Backend verifies via Supabase Admin API, creates/gets local user
+  Returns: {user_id, role, full_name, patient_id, access_token}
 
 Legacy JWT flow (kept for backward compatibility):
   POST /auth/register  — still works
@@ -34,7 +34,11 @@ bearer = HTTPBearer(auto_error=False)
 
 class FirebaseLoginRequest(BaseModel):
     id_token: str
-    role:     str = "patient"   # sent by frontend on first login
+    role:     str = "patient"   # kept for backward compat
+
+class SupabaseLoginRequest(BaseModel):
+    access_token: str
+    role:         str = "patient"
 
 class RegisterRequest(BaseModel):
     email:      str = Field(..., min_length=5)
@@ -71,7 +75,7 @@ class TokenResponse(BaseModel):
     patient_id:   Optional[int] = None
 
 
-# ── Auth dependency — accepts BOTH Firebase tokens AND legacy JWTs ─────────────
+# ── Auth dependency — accepts Supabase tokens, Firebase tokens, and legacy JWTs ──
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
@@ -82,7 +86,21 @@ def get_current_user(
 
     token = credentials.credentials
 
-    # Try Firebase first
+    # 1. Try Supabase (primary)
+    try:
+        from services.supabase_auth import verify_supabase_token, supabase_is_configured
+        if supabase_is_configured():
+            sb = verify_supabase_token(token)
+            if sb:
+                user = db.query(User).filter(User.firebase_uid == sb["uid"]).first()
+                if not user:
+                    user = db.query(User).filter(User.email == sb["email"].lower()).first()
+                if user and user.is_active:
+                    return user
+    except Exception:
+        pass
+
+    # 2. Try Firebase (legacy fallback)
     try:
         from services.firebase_auth import verify_firebase_token, firebase_is_configured
         if firebase_is_configured():
@@ -96,7 +114,7 @@ def get_current_user(
     except Exception:
         pass
 
-    # Fall back to legacy JWT
+    # 3. Fall back to legacy JWT
     payload = decode_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
@@ -106,7 +124,48 @@ def get_current_user(
     return user
 
 
-# ── NEW: Firebase Auth endpoint ───────────────────────────────────────────────
+# ── Supabase Auth endpoint (primary) ─────────────────────────────────────────
+
+@router.post("/supabase-login")
+async def supabase_login(req: SupabaseLoginRequest, db: Session = Depends(get_db)):
+    """
+    Called by frontend after Supabase signs in the user.
+    Verifies the Supabase access_token, creates/gets local DB record.
+    Returns a local JWT for all subsequent API calls.
+    """
+    from services.supabase_auth import verify_supabase_token, get_or_create_supabase_user
+
+    sb = verify_supabase_token(req.access_token)
+    if not sb:
+        raise HTTPException(status_code=401, detail="Invalid Supabase token")
+
+    user = get_or_create_supabase_user(
+        uid=sb["uid"],
+        email=sb["email"],
+        name=sb.get("name", ""),
+        role=req.role,
+        db=db,
+    )
+
+    patient_id = None
+    if user.role == "patient":
+        p = db.query(Patient).filter(Patient.user_id == user.id).first()
+        if p:
+            patient_id = p.id
+
+    token = create_access_token({"sub": user.id, "role": user.role, "fuid": sb["uid"]})
+
+    return {
+        "access_token": token,
+        "token_type":   "bearer",
+        "role":         user.role,
+        "user_id":      user.id,
+        "full_name":    user.full_name,
+        "patient_id":   patient_id,
+    }
+
+
+# ── Firebase Auth endpoint (kept for backward compat) ────────────────────────
 
 @router.post("/firebase-login")
 async def firebase_login(req: FirebaseLoginRequest, db: Session = Depends(get_db)):

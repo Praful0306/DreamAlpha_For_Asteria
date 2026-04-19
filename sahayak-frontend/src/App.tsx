@@ -8,6 +8,7 @@ import AppLayout from "@/components/layout/AppLayout"
 // ── Lazy pages ────────────────────────────────────────────────────────────────
 const Landing      = lazy(() => import("@/pages/Landing"))
 const Auth         = lazy(() => import("@/pages/Auth"))
+const AuthCallback = lazy(() => import("@/pages/AuthCallback"))
 
 // Patient
 const PatientDash    = lazy(() => import("@/pages/patient/Dashboard"))
@@ -69,8 +70,9 @@ export default function App() {
         <AnimatePresence mode="wait">
           <Routes>
             {/* Public */}
-            <Route path="/"     element={<Landing />} />
-            <Route path="/auth" element={<Auth />} />
+            <Route path="/"              element={<Landing />} />
+            <Route path="/auth"          element={<Auth />} />
+            <Route path="/auth/callback" element={<AuthCallback />} />
 
             {/* Patient */}
             <Route path="/patient" element={<RequireAuth role="patient"><AppLayout role="patient" /></RequireAuth>}>

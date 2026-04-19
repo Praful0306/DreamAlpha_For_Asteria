@@ -1,60 +1,53 @@
 /**
- * Sahayak AI — Firebase Auth Helpers (lazy-init)
+ * Sahayak AI — Supabase Auth Helpers
+ * Replaces Firebase Auth entirely.
  */
-import { initializeApp, getApps, type FirebaseApp } from "firebase/app"
-import {
-  getAuth,
-  signInWithPopup,
-  GoogleAuthProvider,
-  signOut as fbSignOut,
-  onAuthStateChanged,
-  type Auth,
-  type User,
-} from "firebase/auth"
+import { createClient } from "@supabase/supabase-js"
 
-let _app: FirebaseApp | null = null
-let _auth: Auth | null = null
+const SUPABASE_URL  = import.meta.env.VITE_SUPABASE_URL  as string
+const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY as string
 
-function getFirebaseAuth(): Auth {
-  if (_auth) return _auth
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON)
 
-  const cfg = {
-    apiKey:            import.meta.env.VITE_FIREBASE_API_KEY            as string,
-    authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN        as string,
-    projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID         as string,
-    storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET     as string,
-    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string,
-    appId:             import.meta.env.VITE_FIREBASE_APP_ID             as string,
-  }
+// ── Email/Password Auth ───────────────────────────────────────────────────────
 
-  _app  = getApps().length === 0 ? initializeApp(cfg) : getApps()[0]
-  _auth = getAuth(_app)
-  return _auth
+export async function signUpWithEmail(email: string, password: string, fullName: string) {
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: { data: { full_name: fullName } },
+  })
+  if (error) throw new Error(error.message)
+  return data
 }
 
-// Kept for code that imports `auth` directly (Sidebar uses clearSession, not auth)
-export const auth = { get current() { return getFirebaseAuth() } }
-
-export async function signInWithGoogle(): Promise<{ idToken: string; user: User }> {
-  const result = await signInWithPopup(getFirebaseAuth(), new GoogleAuthProvider())
-  const idToken = await result.user.getIdToken()
-  return { idToken, user: result.user }
+export async function signInWithEmail(email: string, password: string) {
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+  if (error) throw new Error(error.message)
+  return data
 }
+
+// ── Google OAuth ──────────────────────────────────────────────────────────────
+
+export async function signInWithGoogle() {
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      redirectTo: `${window.location.origin}/auth/callback`,
+    },
+  })
+  if (error) throw new Error(error.message)
+  return data
+}
+
+// ── Sign Out ──────────────────────────────────────────────────────────────────
 
 export async function signOut() {
-  await fbSignOut(getFirebaseAuth())
-  localStorage.removeItem("sahayak_token")
-  localStorage.removeItem("sahayak_role")
-  localStorage.removeItem("sahayak_user")
+  await supabase.auth.signOut()
+  clearSession()
 }
 
-export function onAuthChange(callback: (user: User | null) => void) {
-  return onAuthStateChanged(getFirebaseAuth(), callback)
-}
-
-export function getStoredToken(): string | null {
-  return localStorage.getItem("sahayak_token")
-}
+// ── Session Storage ───────────────────────────────────────────────────────────
 
 export function storeSession(token: string, role: string, user: { name: string; id: string | number }) {
   localStorage.setItem("sahayak_token", token)
@@ -66,4 +59,9 @@ export function clearSession() {
   localStorage.removeItem("sahayak_token")
   localStorage.removeItem("sahayak_role")
   localStorage.removeItem("sahayak_user")
+  sessionStorage.removeItem("sahayak_patient_id")
+}
+
+export function getStoredToken(): string | null {
+  return localStorage.getItem("sahayak_token")
 }
