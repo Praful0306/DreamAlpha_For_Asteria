@@ -100,14 +100,20 @@ app = FastAPI(
 )
 
 _FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
+# Build origins list — supports multiple comma-separated URLs in FRONTEND_URL
+_origins_raw = [u.strip() for u in _FRONTEND_URL.split(",") if u.strip()]
+_ALLOWED_ORIGINS = list(set([
+    *_origins_raw,
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+]))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        _FRONTEND_URL,
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://.*\.vercel\.app",   # allow all Vercel preview URLs
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
