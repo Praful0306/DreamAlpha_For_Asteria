@@ -13,6 +13,7 @@ interface User {
   email?: string
   role: "patient" | "doctor" | "asha"
   firebase_uid?: string
+  isDemo?: boolean          // true when using demo mode (no backend)
 }
 
 interface AppStore {

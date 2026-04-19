@@ -455,11 +455,17 @@ export default function Auth() {
                       doctor:  "Dr. Arjun Sharma",
                       asha:    "Sunita ASHA Worker",
                     }
+                    // Clear any old real-user token so demo doesn't use wrong JWT
+                    localStorage.removeItem("sahayak_token")
+                    localStorage.removeItem("sahayak_role")
+                    localStorage.removeItem("sahayak_user")
+                    sessionStorage.removeItem("sahayak_patient_id")
                     setAuth(
                       {
-                        id: 1,
+                        id: 999,
                         name: demoNames[role as keyof typeof demoNames] ?? "Demo User",
                         role: role as "patient" | "doctor" | "asha",
+                        isDemo: true,
                       },
                       "demo_token"
                     )

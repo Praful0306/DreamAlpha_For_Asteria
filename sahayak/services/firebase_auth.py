@@ -111,16 +111,25 @@ def get_or_create_firebase_user(
     from db.database import User, Patient
     from services.auth_service import generate_share_code
 
+    valid_roles = ("patient", "doctor", "asha")
+    safe_role = role if role in valid_roles else None
+
     # Check if user already exists by firebase_uid
     user = db.query(User).filter(User.firebase_uid == uid).first()
     if user:
+        # Update role if caller explicitly passed a valid role
+        if safe_role and user.role != safe_role:
+            user.role = safe_role
+            db.commit()
         return user
 
     # Also check by email (handles users who registered before Firebase migration)
     user = db.query(User).filter(User.email == email.lower()).first()
     if user:
-        # Link Firebase UID to existing account
+        # Link Firebase UID and update role if changed
         user.firebase_uid = uid
+        if safe_role and user.role != safe_role:
+            user.role = safe_role
         db.commit()
         return user
 

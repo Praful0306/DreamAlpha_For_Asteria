@@ -20,6 +20,10 @@ async function request<T>(
   signal?: AbortSignal
 ): Promise<T> {
   const token = getToken()
+  // Block real API calls in demo mode
+  if (token === "demo_token") {
+    throw new Error("Demo mode — create a real account to use this feature.")
+  }
   const headers: Record<string, string> = {}
   if (token) headers["Authorization"] = `Bearer ${token}`
   if (body !== undefined && !(body instanceof FormData)) {
