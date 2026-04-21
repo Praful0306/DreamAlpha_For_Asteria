@@ -147,6 +147,7 @@ _include("routes.reports")
 _include("routes.analytics")
 _include("routes.vapi_routes")
 _include("routes.patients_mgmt")
+_include("routes.retell_routes")
 
 
 # ── Existing utility routes (unchanged) ──────────────────────────────────────
