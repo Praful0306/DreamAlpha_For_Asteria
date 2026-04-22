@@ -163,6 +163,24 @@ class Appointment(Base):
     updated_at     = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class AshaCallLog(Base):
+    """Tracks every ASHA↔Patient Omnidim voice call — inbound and outbound."""
+    __tablename__ = "asha_call_logs"
+    id            = Column(Integer, primary_key=True, index=True)
+    direction     = Column(String(10), nullable=False)    # "inbound" | "outbound"
+    call_type     = Column(String(20), nullable=True)     # "health_check" | "followup" | "emergency"
+    patient_id    = Column(Integer, ForeignKey("patients.id"), nullable=True, index=True)
+    patient_phone = Column(String(20), nullable=True)
+    asha_id       = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    omnidim_call_id = Column(String(128), nullable=True)
+    health_update = Column(Text, nullable=True)           # what patient reported
+    symptoms      = Column(Text, nullable=True)
+    visit_requested = Column(Boolean, default=False)
+    urgency       = Column(String(20), nullable=True)     # "urgent" | "normal"
+    summary       = Column(Text, nullable=True)           # AI call summary
+    created_at    = Column(DateTime, default=datetime.utcnow)
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -203,6 +221,8 @@ def run_migrations():
         ("users",    "firebase_uid",            "TEXT"),
         ("users",    "district",                "TEXT"),
         ("users",    "village",                 "TEXT"),
+        ("users",    "phone",                   "TEXT"),        # ASHA / doctor phone for outbound calls
+        # asha_call_logs — created in init_db via Base.metadata if model added
         # doctor_patient_access table — ensure columns exist
         ("doctor_patient_access", "is_active",  "INTEGER DEFAULT 1"),
         ("doctor_patient_access", "granted_at", "DATETIME"),

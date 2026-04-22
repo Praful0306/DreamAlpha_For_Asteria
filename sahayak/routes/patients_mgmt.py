@@ -441,8 +441,20 @@ async def revoke_share_code(patient_id: int, db: Session = Depends(get_db)):
 
 # ── Appointments ──────────────────────────────────────────────────────────────
 
-SLOT_DURATION_MINS = 20
-WORKING_HOURS = list(range(9 * 60, 17 * 60, SLOT_DURATION_MINS))  # 09:00–17:00
+SLOT_DURATION_MINS = 15   # 15-minute appointment slots
+
+# Morning:   8:30 AM – 12:30 PM  (last slot 12:15, ends 12:30)
+# Lunch:     12:30 PM – 1:30 PM  (no slots)
+# Afternoon: 1:30 PM  – 6:00 PM  (last slot 5:45, ends 6:00)
+_MORNING_START   = 8 * 60 + 30    # 510
+_MORNING_END     = 12 * 60 + 30   # 750
+_AFTERNOON_START = 13 * 60 + 30   # 810
+_AFTERNOON_END   = 18 * 60        # 1080
+
+WORKING_HOURS = (
+    list(range(_MORNING_START,   _MORNING_END,   SLOT_DURATION_MINS)) +
+    list(range(_AFTERNOON_START, _AFTERNOON_END, SLOT_DURATION_MINS))
+)
 
 
 def _slot_str(minutes: int) -> str:
@@ -770,3 +782,122 @@ async def get_doctor_appointments(doctor_id: int, days: int = 7):
     except Exception as exc:
         logger.error("get_doctor_appointments: %s", exc)
         return []
+
+
+# ── Patient's own appointment list ───────────────────────────────────────────
+
+@router.get("/appointments/patient-list")
+async def get_patient_appointments(patient_id: int, days: int = 30):
+    """
+    Returns upcoming appointments for a patient — shown on Patient Dashboard.
+    Looks up by patient_id OR phone (if patient registered via voice agent).
+    """
+    today = datetime.utcnow().date()
+    end   = today + timedelta(days=days)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT id, appt_date, time_slot, doctor_id, reason, status, created_at "
+                    "FROM appointments "
+                    "WHERE patient_id=:pid AND appt_date>=:start AND appt_date<=:end "
+                    "AND status!='cancelled' "
+                    "ORDER BY appt_date, time_slot"
+                ),
+                {"pid": patient_id, "start": str(today), "end": str(end)},
+            ).fetchall()
+        return [
+            {
+                "id":       r[0],
+                "date":     r[1],
+                "time":     r[2],
+                "doctor_id": r[3],
+                "reason":   r[4] or "Doctor consultation",
+                "status":   r[5],
+                "is_today": r[1] == str(today),
+            }
+            for r in rows
+        ]
+    except Exception as exc:
+        logger.error("get_patient_appointments: %s", exc)
+        return []
+
+
+# ── Voice-agent patient registration (Omnidim webhook shortcut) ───────────────
+
+class VoiceRegisterRequest(BaseModel):
+    """Body sent by the Omnidim voice agent after it collects patient info."""
+    name:  str
+    phone: str
+    age:   Optional[int] = 0
+
+
+@router.post("/appointments/voice-register")
+async def voice_register_patient(req: VoiceRegisterRequest):
+    """
+    Create or find a patient record and return their Sahayak Patient ID.
+    Called by the Omnidim voice agent after collecting name, phone, age.
+    Response is read aloud by the agent.
+    """
+    from services.auth_service import generate_share_code as _gen
+
+    name  = req.name.strip()
+    phone = "".join(c for c in req.phone.strip() if c.isdigit() or c == "+")
+    age   = req.age or 0
+
+    if not name or not phone:
+        return {"result": "Name and phone are required.", "patient_id": None}
+
+    try:
+        # Check for existing patient
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT id, name FROM patients WHERE phone=:p LIMIT 1"),
+                {"p": phone},
+            ).fetchone()
+
+        if row:
+            pid, pname = row
+            return {
+                "patient_id": pid,
+                "name":       pname,
+                "is_new":     False,
+                "result": (
+                    f"Welcome back, {pname}! Your Sahayak Patient ID is {pid}. "
+                    f"Please note: Patient ID {pid}. "
+                    f"Show this to reception when you visit the clinic."
+                ),
+            }
+
+        # Create new patient
+        share = _gen()
+        with engine.begin() as conn:
+            result = conn.execute(
+                text(
+                    "INSERT INTO patients "
+                    "(name, phone, age, gender, share_code, share_code_active, created_at) "
+                    "VALUES (:n, :p, :a, 'Not specified', :sc, 1, :now)"
+                ),
+                {"n": name, "p": phone, "a": age, "sc": share, "now": datetime.utcnow().isoformat()},
+            )
+            pid = result.lastrowid
+
+        logger.info("Voice-registered patient id=%d name=%s", pid, name)
+        return {
+            "patient_id": pid,
+            "name":       name,
+            "is_new":     True,
+            "result": (
+                f"Registration successful! {name}, your Sahayak Patient ID is {pid}. "
+                f"Please write this down: Patient ID {pid}. "
+                f"When you visit the clinic, tell the staff your Patient ID is {pid} "
+                f"and they will pull up your records immediately."
+            ),
+        }
+
+    except Exception as exc:
+        logger.error("voice_register_patient: %s", exc)
+        return {
+            "patient_id": None,
+            "result": "Registration failed due to a system error. Please try again.",
+        }

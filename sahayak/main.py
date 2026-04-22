@@ -148,6 +148,8 @@ _include("routes.analytics")
 _include("routes.vapi_routes")
 _include("routes.patients_mgmt")
 _include("routes.retell_routes")
+_include("routes.omnidim_routes")
+_include("routes.asha_call_routes")
 
 
 # ── Existing utility routes (unchanged) ──────────────────────────────────────

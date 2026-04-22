@@ -5,7 +5,8 @@ import { toast } from "sonner"
 import {
   Users, Plus, Search, Loader2, User, ChevronRight,
   Mic, MicOff, Upload, FileText, X, CheckCircle2,
-  Sparkles, Volume2, RefreshCw,
+  Sparkles, Volume2, RefreshCw, Phone, PhoneCall,
+  AlertTriangle, Heart, ClipboardList, Bell,
 } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -19,10 +20,15 @@ import { RiskBadge } from "@/components/shared/RiskBadge"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   getMyPatients, registerPatient, extractFile, fillFormFromVoice,
+  triggerAshaCall,
   type Patient, type VoiceFormResult, type ExtractionResponse,
 } from "@/lib/api"
 import { useStore } from "@/store/useStore"
 import { useVoice } from "@/hooks/useVoice"
+
+// ── Call patient modal state ───────────────────────────────────────────────────
+type CallType = "health_check" | "followup" | "emergency" | "reminder"
+interface CallModal { patient: Patient; open: boolean }
 
 // ── Form state ────────────────────────────────────────────────────────────────
 
@@ -74,6 +80,43 @@ export default function AshaPatients() {
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
+
+  // ── Call patient state ────────────────────────────────────────────────────────
+  const [callModal,    setCallModal]    = useState<CallModal | null>(null)
+  const [callType,     setCallType]     = useState<CallType>("health_check")
+  const [callMessage,  setCallMessage]  = useState("")
+  const [calling,      setCalling]      = useState(false)
+
+  async function handleCallPatient() {
+    if (!callModal?.patient) return
+    setCalling(true)
+    try {
+      const result = await triggerAshaCall(
+        callModal.patient.id,
+        callType,
+        user?.name ?? "ASHA Worker",
+        "en",
+        callMessage.trim() || undefined,
+      )
+      if (result.success) {
+        toast.success(
+          result.demo_mode
+            ? `Demo: call logged for ${result.patient_name}`
+            : `Calling ${result.patient_name}… the AI agent will check their health.`,
+          { duration: 5000 },
+        )
+      } else {
+        toast.error(result.error ?? "Could not place call")
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Call failed")
+    } finally {
+      setCalling(false)
+      setCallModal(null)
+      setCallMessage("")
+      setCallType("health_check")
+    }
+  }
 
   // ── Voice helpers ────────────────────────────────────────────────────────────
 
@@ -326,36 +369,169 @@ export default function AshaPatients() {
       ) : (
         <div className="space-y-2">
           {filtered.map((p, i) => (
-            <motion.button
+            <motion.div
               key={p.id}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.04 }}
-              className="w-full flex items-center justify-between p-4 rounded-xl border border-[#2a2a35] bg-[#1a1a22] hover:border-brand-500/30 hover:bg-white/[0.02] transition-all text-left"
-              onClick={() => navigate(`/asha/diagnose`)}
+              className="flex items-center justify-between p-4 rounded-xl border border-[#2a2a35] bg-[#1a1a22] hover:border-brand-500/20 transition-all"
             >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-brand-500/15 flex items-center justify-center shrink-0">
-                  <User className="w-5 h-5 text-brand-400" />
+              {/* Patient info — clicking navigates to diagnose */}
+              <button
+                className="flex items-center gap-3 flex-1 text-left min-w-0"
+                onClick={() => navigate(`/asha/diagnose`)}
+              >
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
+                  p.risk_level === "EMERGENCY" || p.risk_level === "HIGH"
+                    ? "bg-red-500/15"
+                    : "bg-brand-500/15"
+                }`}>
+                  <User className={`w-5 h-5 ${
+                    p.risk_level === "EMERGENCY" || p.risk_level === "HIGH"
+                      ? "text-red-400"
+                      : "text-brand-400"
+                  }`} />
                 </div>
-                <div>
-                  <p className="text-sm font-semibold text-white">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-white truncate">
                     {p.name}
-                    {p.is_pregnant && <span className="ml-2 text-pink-400 text-xs">Pregnant</span>}
+                    {p.is_pregnant && <span className="ml-2 text-pink-400 text-[10px] font-bold">● PREGNANT</span>}
                   </p>
                   <p className="text-xs text-gray-500 mt-0.5">
                     {p.age}y · {p.gender} · {p.village ?? p.district ?? "—"}
+                    {(p as any).phone && (
+                      <span className="ml-1.5 text-gray-600">· {(p as any).phone}</span>
+                    )}
                   </p>
                 </div>
-              </div>
-              <div className="flex items-center gap-3">
+              </button>
+
+              {/* Actions */}
+              <div className="flex items-center gap-2 shrink-0 ml-3">
                 <RiskBadge level={p.risk_level ?? "LOW"} size="sm" />
+
+                {/* Call button */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (!(p as any).phone) {
+                      toast.error(`${p.name} has no phone number on record. Update their profile first.`)
+                      return
+                    }
+                    setCallModal({ patient: p, open: true })
+                    setCallType("health_check")
+                  }}
+                  title={`Call ${p.name}`}
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all active:scale-95 ${
+                    (p as any).phone
+                      ? "bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400"
+                      : "bg-white/5 text-gray-600 cursor-not-allowed"
+                  }`}
+                >
+                  <Phone className="w-3.5 h-3.5" />
+                </button>
+
                 <ChevronRight className="w-4 h-4 text-gray-600" />
               </div>
-            </motion.button>
+            </motion.div>
           ))}
         </div>
       )}
+
+      {/* ── Call Patient Modal ───────────────────────────────────────────────── */}
+      <Dialog
+        open={!!callModal?.open}
+        onOpenChange={(v) => { if (!v) { setCallModal(null); setCallMessage(""); setCallType("health_check") } }}
+      >
+        <DialogContent className="bg-[#1a1a22] border-[#2a2a35] text-white max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-emerald-500/15 flex items-center justify-center">
+                <PhoneCall className="w-4.5 h-4.5 text-emerald-400" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-white">Call Patient via AI Agent</p>
+                <p className="text-xs text-gray-500 font-normal">{callModal?.patient.name}</p>
+              </div>
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 mt-1">
+            {/* How it works */}
+            <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-3 text-xs text-gray-400 leading-relaxed">
+              <span className="text-white font-semibold">How it works: </span>
+              Omnidim AI calls the patient's phone · conducts a health check · saves the update to their record · you get notified.
+            </div>
+
+            {/* Call type */}
+            <div className="space-y-2">
+              <Label className="text-xs text-gray-400 uppercase tracking-wide">Call Type</Label>
+              <div className="grid grid-cols-2 gap-2">
+                {([
+                  { value: "health_check", label: "Health Check",  icon: Heart,          color: "emerald" },
+                  { value: "followup",     label: "Follow-up",     icon: ClipboardList,  color: "blue"    },
+                  { value: "reminder",     label: "Reminder",      icon: Bell,           color: "amber"   },
+                  { value: "emergency",    label: "Emergency",     icon: AlertTriangle,  color: "red"      },
+                ] as const).map(({ value, label, icon: Icon, color }) => (
+                  <button
+                    key={value}
+                    onClick={() => setCallType(value)}
+                    className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-xs font-semibold transition-all ${
+                      callType === value
+                        ? `bg-${color}-500/20 border-${color}-500/40 text-${color}-300`
+                        : "bg-white/[0.03] border-white/[0.06] text-gray-400 hover:border-white/10"
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Optional custom message */}
+            <div className="space-y-2">
+              <Label className="text-xs text-gray-400 uppercase tracking-wide">
+                Custom Message <span className="normal-case text-gray-600">(optional)</span>
+              </Label>
+              <Input
+                value={callMessage}
+                onChange={(e) => setCallMessage(e.target.value)}
+                placeholder={`e.g. "Please check if you took your iron tablets today"`}
+                className="bg-white/5 border-white/10 text-white text-sm placeholder:text-gray-600 h-9"
+              />
+            </div>
+
+            {/* Patient phone preview */}
+            {callModal?.patient && (p => p ? (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.025] border border-white/[0.04] text-xs text-gray-400">
+                <Phone className="w-3 h-3 text-emerald-400 shrink-0" />
+                <span>Calling <strong className="text-white">{callModal.patient.name}</strong> at <strong className="text-emerald-300">{(callModal.patient as any).phone}</strong></span>
+              </div>
+            ) : null)(callModal?.patient)}
+
+            {/* CTA */}
+            <div className="flex gap-2.5 pt-1">
+              <Button
+                variant="outline"
+                className="flex-1 border-white/10 text-gray-400 hover:text-white bg-transparent h-10"
+                onClick={() => { setCallModal(null); setCallMessage(""); setCallType("health_check") }}
+                disabled={calling}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white h-10 gap-2"
+                onClick={handleCallPatient}
+                disabled={calling}
+              >
+                {calling ? <Loader2 className="w-4 h-4 animate-spin" /> : <PhoneCall className="w-4 h-4" />}
+                {calling ? "Placing call…" : "Start Call"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Register Dialog ──────────────────────────────────────────────────── */}
       <Dialog open={open} onOpenChange={(v) => { if (!v) resetDialog(); setOpen(v) }}>

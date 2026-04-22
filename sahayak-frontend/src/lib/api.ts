@@ -291,6 +291,78 @@ export const addManualAppointment = (data: {
   "/appointments/manual-add", data
 )
 
+export interface PatientAppointment {
+  id:        number
+  date:      string
+  time:      string
+  doctor_id: number
+  reason:    string
+  status:    string
+  is_today:  boolean
+}
+export const getPatientAppointments = (patientId: number, days = 30) =>
+  get<PatientAppointment[]>(`/appointments/patient-list?patient_id=${patientId}&days=${days}`)
+
+// ── ASHA ↔ Patient Call Agent ─────────────────────────────────────────────────
+
+export interface AshaContact {
+  found:          boolean
+  asha_id?:       number
+  name?:          string
+  phone?:         string
+  village?:       string
+  district?:      string
+  omnidim_phone?: string   // the Omnidim number patient should call
+}
+
+export interface AshaCallLog {
+  id:               number
+  direction:        "inbound" | "outbound"
+  call_type:        string
+  patient_phone:    string
+  patient_name:     string
+  health_update:    string | null
+  symptoms:         string | null
+  visit_requested:  boolean
+  urgency:          string | null
+  created_at:       string
+}
+
+export interface TriggerCallResult {
+  success:       boolean
+  demo_mode?:    boolean
+  call_id?:      string
+  log_id?:       number
+  patient_name?: string
+  patient_phone?: string
+  message?:      string
+  error?:        string
+}
+
+/** Patient Dashboard — get linked ASHA worker's name + contact info */
+export const getAshaContact = () =>
+  get<AshaContact>("/me/asha-contact")
+
+/** ASHA Dashboard — trigger Omnidim outbound call to patient */
+export const triggerAshaCall = (
+  patientId: number,
+  callType: "health_check" | "followup" | "emergency" | "reminder",
+  ashaName: string,
+  lang: "en" | "hi" | "kn",
+  message?: string,
+) =>
+  post<TriggerCallResult>("/asha/call-patient", {
+    patient_id: patientId,
+    call_type:  callType,
+    asha_name:  ashaName,
+    lang,
+    message,
+  })
+
+/** ASHA Dashboard — get recent call logs (health updates + visit requests) */
+export const getAshaCallLogs = () =>
+  get<AshaCallLog[]>("/asha/call-logs")
+
 /** Payload that matches the backend SaveFullReportRequest model exactly */
 export interface SaveReportPayload {
   patient_id: number

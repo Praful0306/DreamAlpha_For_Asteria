@@ -5,13 +5,45 @@ import {
   Mic, Upload, FileText, Share2, Activity, Heart,
   Thermometer, Droplets, TrendingUp, TrendingDown,
   Minus, ChevronRight, Zap, Shield, Clock, Phone,
+  Calendar, PhoneCall, Volume2, UserCheck, MapPin,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useStore } from "@/store/useStore"
-import { getPatientProfile, getReports, resolvePatientId, type Patient, type MedicalReport } from "@/lib/api"
+import {
+  getPatientProfile, getReports, resolvePatientId,
+  getPatientAppointments, getAshaContact,
+  type Patient, type MedicalReport, type PatientAppointment, type AshaContact,
+} from "@/lib/api"
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts"
 import { formatDate } from "@/lib/utils"
+
+/* ── Omnidim widget loader ────────────────────────────────────────────────────
+   Set VITE_OMNIDIM_WIDGET_SRC in .env.local to the script src URL from your
+   Omnidim dashboard → Agent → Deploy → Web Bot Widget → copy the `src="..."`
+   value from the generated <script> tag.
+   Example: VITE_OMNIDIM_WIDGET_SRC=https://app.omnidim.io/widget/loader.js?key=abc123
+─────────────────────────────────────────────────────────────────────────────── */
+function useOmnidimWidget() {
+  useEffect(() => {
+    const widgetSrc = import.meta.env.VITE_OMNIDIM_WIDGET_SRC as string | undefined
+    if (!widgetSrc) return
+
+    const existing = document.getElementById("omnidim-widget-script")
+    if (existing) return   // already loaded
+
+    const script = document.createElement("script")
+    script.id    = "omnidim-widget-script"
+    script.src   = widgetSrc
+    script.setAttribute("data-agent-id", "149053")
+    script.async = true
+    document.body.appendChild(script)
+
+    return () => {
+      try { document.body.removeChild(script) } catch { /* already removed */ }
+    }
+  }, [])
+}
 
 /* ── helpers ──────────────────────────────────────────────────────────────── */
 function greet() {
@@ -63,13 +95,28 @@ function Spark({ values, color }: { values: number[]; color: string }) {
   )
 }
 
+/* ── Format time slot "HH:MM" → "H:MM AM/PM" ────────────────────────────── */
+function fmtSlot(slot: string) {
+  try {
+    const [h, m] = slot.split(":").map(Number)
+    const ap  = h >= 12 ? "PM" : "AM"
+    const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h
+    return `${h12}:${m.toString().padStart(2, "0")} ${ap}`
+  } catch { return slot }
+}
+
 /* ── main ─────────────────────────────────────────────────────────────────── */
 export default function PatientDashboard() {
   const navigate = useNavigate()
   const { user }  = useStore()
-  const [profile,  setProfile]  = useState<Patient | null>(null)
-  const [reports,  setReports]  = useState<MedicalReport[]>([])
-  const [loading,  setLoading]  = useState(true)
+  const [profile,      setProfile]      = useState<Patient | null>(null)
+  const [reports,      setReports]      = useState<MedicalReport[]>([])
+  const [appts,        setAppts]        = useState<PatientAppointment[]>([])
+  const [ashaContact,  setAshaContact]  = useState<AshaContact | null>(null)
+  const [loading,      setLoading]      = useState(true)
+
+  // Load Omnidim floating widget (no-op if env var not set)
+  useOmnidimWidget()
 
   const fetchAll = useCallback(() => {
     if (!user) { setLoading(false); return }
@@ -78,10 +125,14 @@ export default function PatientDashboard() {
       Promise.all([
         getPatientProfile(pid).catch(() => null),
         getReports(pid).catch(() => []),
+        getPatientAppointments(pid).catch(() => []),
+        getAshaContact().catch(() => null),
       ])
-    ).then(([p, r]) => {
+    ).then(([p, r, a, asha]) => {
       setProfile(p)
       setReports(r as MedicalReport[])
+      setAppts(a as PatientAppointment[])
+      setAshaContact(asha as AshaContact | null)
     }).finally(() => setLoading(false))
   }, [user])
 
@@ -328,6 +379,190 @@ export default function PatientDashboard() {
           </div>
         </motion.div>
       </div>
+
+      {/* ── AI VOICE APPOINTMENT BOOKING ── */}
+      <motion.div variants={fadeUp} initial="hidden" animate="show" custom={6.5}
+        className="rounded-2xl overflow-hidden border border-white/5 bg-gradient-to-br from-[#0d1a2e] via-[#0f1520] to-[#0b0b10]">
+        <div className="p-5">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 rounded-xl bg-sky-500/15 flex items-center justify-center"
+              style={{ boxShadow: "0 0 18px #0ea5e933" }}>
+              <PhoneCall className="w-5 h-5 text-sky-400" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white">AI Voice Appointment Booking</h3>
+              <p className="text-xs text-gray-500">Call our AI agent — get your Patient ID instantly</p>
+            </div>
+          </div>
+
+          {/* How it works */}
+          <div className="grid grid-cols-3 gap-2 mb-4">
+            {[
+              { step: "1", label: "Call the number", desc: "AI agent answers 24/7", icon: Phone, color: "text-sky-400", bg: "bg-sky-500/10" },
+              { step: "2", label: "Share your details", desc: "Name, phone, age", icon: Volume2, color: "text-violet-400", bg: "bg-violet-500/10" },
+              { step: "3", label: "Get your Patient ID", desc: "Show at reception", icon: Shield, color: "text-emerald-400", bg: "bg-emerald-500/10" },
+            ].map(({ step, label, desc, icon: Icon, color, bg }) => (
+              <div key={step} className={`rounded-xl ${bg} border border-white/[0.06] p-3 text-center`}>
+                <div className={`w-7 h-7 rounded-lg ${bg} flex items-center justify-center mx-auto mb-1.5`}>
+                  <Icon className={`w-3.5 h-3.5 ${color}`} />
+                </div>
+                <p className={`text-[10px] font-bold uppercase tracking-wide ${color} mb-0.5`}>Step {step}</p>
+                <p className="text-white text-xs font-semibold leading-tight">{label}</p>
+                <p className="text-gray-500 text-[10px] mt-0.5">{desc}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* CTA row */}
+          <div className="flex flex-col sm:flex-row gap-2.5">
+            {/* Phone call button */}
+            <a
+              href="tel:+912271263971"
+              className="flex-1 flex items-center justify-center gap-2.5 py-3 rounded-xl font-semibold text-white text-sm transition-all active:scale-95 hover:brightness-110"
+              style={{ background: "linear-gradient(135deg, #0284c7cc, #0284c788)", boxShadow: "0 4px 20px #0284c733" }}
+            >
+              <PhoneCall className="w-4 h-4" />
+              Call +91 22 7126 3971
+            </a>
+
+            {/* In-app voice booking */}
+            <button
+              onClick={() => navigate("/patient/call")}
+              className="flex-1 flex items-center justify-center gap-2.5 py-3 rounded-xl font-semibold text-white text-sm border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] transition-all active:scale-95"
+            >
+              <Mic className="w-4 h-4 text-brand-400" />
+              Book via App (Voice)
+            </button>
+          </div>
+
+          <p className="text-[10px] text-gray-600 text-center mt-3">
+            Available 24 × 7 · Supports English, Hindi &amp; Kannada
+          </p>
+        </div>
+      </motion.div>
+
+      {/* ── TALK TO YOUR ASHA WORKER ── */}
+      <motion.div variants={fadeUp} initial="hidden" animate="show" custom={7}
+        className="rounded-2xl overflow-hidden border border-white/5 bg-gradient-to-br from-[#0d2218] via-[#0f1a12] to-[#0b0b10]">
+        <div className="p-5">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/15 flex items-center justify-center"
+              style={{ boxShadow: "0 0 18px #22c55e22" }}>
+              <UserCheck className="w-5 h-5 text-emerald-400" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white">Talk to Your ASHA Worker</h3>
+              <p className="text-xs text-gray-500">
+                {ashaContact?.found
+                  ? `Your ASHA: ${ashaContact.name}${ashaContact.village ? ` · ${ashaContact.village}` : ""}`
+                  : "AI health assistant — relays your update to your ASHA"}
+              </p>
+            </div>
+          </div>
+
+          {/* ASHA contact card (if linked) */}
+          {ashaContact?.found && (
+            <div className="flex items-center gap-3 mb-4 px-3.5 py-3 rounded-xl bg-emerald-500/[0.07] border border-emerald-500/20">
+              <div className="w-9 h-9 rounded-full bg-emerald-500/20 flex items-center justify-center shrink-0">
+                <UserCheck className="w-4 h-4 text-emerald-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-white truncate">{ashaContact.name}</p>
+                <p className="text-xs text-emerald-400/70 flex items-center gap-1 mt-0.5">
+                  <MapPin className="w-2.5 h-2.5" />
+                  {[ashaContact.village, ashaContact.district].filter(Boolean).join(", ") || "Your area"}
+                </p>
+              </div>
+              <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 shrink-0">
+                LINKED
+              </span>
+            </div>
+          )}
+
+          {/* How it works */}
+          <div className="grid grid-cols-3 gap-2 mb-4">
+            {[
+              { step: "1", label: "Call the line", desc: "AI answers instantly", icon: Phone, color: "text-emerald-400", bg: "bg-emerald-500/10" },
+              { step: "2", label: "Describe how you feel", desc: "Any language", icon: Volume2, color: "text-teal-400", bg: "bg-teal-500/10" },
+              { step: "3", label: "ASHA gets notified", desc: "Update saved to record", icon: UserCheck, color: "text-cyan-400", bg: "bg-cyan-500/10" },
+            ].map(({ step, label, desc, icon: Icon, color, bg }) => (
+              <div key={step} className={`rounded-xl ${bg} border border-white/[0.06] p-3 text-center`}>
+                <div className={`w-7 h-7 rounded-lg ${bg} flex items-center justify-center mx-auto mb-1.5`}>
+                  <Icon className={`w-3.5 h-3.5 ${color}`} />
+                </div>
+                <p className={`text-[10px] font-bold uppercase tracking-wide ${color} mb-0.5`}>Step {step}</p>
+                <p className="text-white text-xs font-semibold leading-tight">{label}</p>
+                <p className="text-gray-500 text-[10px] mt-0.5">{desc}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* CTA */}
+          <a
+            href={`tel:${ashaContact?.omnidim_phone ?? "+912271263971"}`}
+            className="flex items-center justify-center gap-2.5 py-3 rounded-xl font-semibold text-white text-sm transition-all active:scale-95 hover:brightness-110 w-full"
+            style={{ background: "linear-gradient(135deg, #16a34acc, #15803d88)", boxShadow: "0 4px 20px #16a34a22" }}
+          >
+            <Phone className="w-4 h-4" />
+            Call ASHA Health Line · {ashaContact?.omnidim_phone ?? "+91 22 7126 3971"}
+          </a>
+
+          <p className="text-[10px] text-gray-600 text-center mt-3">
+            Our AI health assistant will check on you and update your ASHA worker
+          </p>
+        </div>
+      </motion.div>
+
+      {/* ── UPCOMING APPOINTMENTS ── */}
+      {appts.length > 0 && (
+        <motion.div variants={fadeUp} initial="hidden" animate="show" custom={6.8}
+          className="rounded-2xl border border-white/5 bg-[#0f0f16] p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-emerald-500/15 flex items-center justify-center">
+                <Calendar className="w-4 h-4 text-emerald-400" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-white">Upcoming Appointments</h3>
+                <p className="text-xs text-gray-500">{appts.length} scheduled</p>
+              </div>
+            </div>
+            <button onClick={() => navigate("/patient/call")}
+              className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1 transition-colors">
+              Book more <ChevronRight className="w-3 h-3" />
+            </button>
+          </div>
+
+          <div className="space-y-2">
+            {appts.slice(0, 4).map((a, i) => (
+              <motion.div key={a.id} variants={fadeUp} initial="hidden" animate="show" custom={i}
+                className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.025] border border-white/[0.04]">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                  a.is_today ? "bg-emerald-500/20" : "bg-brand-500/15"
+                }`}>
+                  <Calendar className={`w-4 h-4 ${a.is_today ? "text-emerald-400" : "text-brand-400"}`} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-white truncate">{a.reason}</p>
+                  <div className="flex items-center gap-2 mt-0.5 text-xs text-gray-500">
+                    <Clock className="w-3 h-3" />
+                    <span>{a.is_today ? "Today" : formatDate(a.date)}</span>
+                    <span>·</span>
+                    <span>{fmtSlot(a.time)}</span>
+                  </div>
+                </div>
+                <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full shrink-0 ${
+                  a.is_today
+                    ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/25"
+                    : "bg-brand-500/10 text-brand-400 border border-brand-500/20"
+                }`}>
+                  {a.is_today ? "TODAY" : a.status.toUpperCase()}
+                </span>
+              </motion.div>
+            ))}
+          </div>
+        </motion.div>
+      )}
 
       {/* ── LAB VALUES ── */}
       {!isEmpty && !loading && (latest?.hemoglobin || latest?.blood_sugar_fasting || latest?.creatinine) && (

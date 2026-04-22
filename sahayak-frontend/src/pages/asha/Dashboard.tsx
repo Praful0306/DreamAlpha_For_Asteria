@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { motion } from "framer-motion"
-import { Users, Mic, Map, CheckSquare, Trophy, Star, Zap, AlertTriangle, Bell, Send } from "lucide-react"
+import {
+  Users, Mic, Map, CheckSquare, Trophy, Star, Zap,
+  AlertTriangle, Bell, Send, PhoneIncoming, PhoneOutgoing,
+  Heart, ClipboardList, Clock, MapPin, UserCheck,
+} from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -9,7 +13,11 @@ import { Progress } from "@/components/ui/progress"
 import { RiskBadge } from "@/components/shared/RiskBadge"
 import { VAPICallButton } from "@/components/shared/VAPICallButton"
 import { useStore } from "@/store/useStore"
-import { getMyPatients, getAnalyticsStats, getDeepImpact, type Patient } from "@/lib/api"
+import {
+  getMyPatients, getAnalyticsStats, getDeepImpact,
+  getAshaCallLogs,
+  type Patient, type AshaCallLog,
+} from "@/lib/api"
 import { formatDate } from "@/lib/utils"
 import { triggerAlert, sendSMS } from "@/lib/makecom"
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts"
@@ -70,6 +78,12 @@ export default function AshaDashboard() {
       setImpact((imp ?? MOCK_IMPACT) as { impact_score: number; badges: string[]; summary: string })
     }).finally(() => setLoading(false))
   }, [user?.id])
+
+  const [callLogs, setCallLogs] = useState<AshaCallLog[]>([])
+
+  useEffect(() => {
+    getAshaCallLogs().catch(() => []).then(logs => setCallLogs(logs as AshaCallLog[]))
+  }, [])
 
   const [alerting, setAlerting] = useState<Record<number, boolean>>({})
   const [toast, setToast]       = useState<string | null>(null)
@@ -319,6 +333,131 @@ export default function AshaDashboard() {
           </Card>
         </motion.div>
       )}
+
+      {/* ── Health Call Logs ──────────────────────────────────────────────────── */}
+      <motion.div variants={fadeUp} initial="hidden" animate="visible" custom={8}>
+        <Card className="bg-[#1a1a22] border-[#2a2a35]">
+          <CardHeader className="flex-row items-center justify-between pb-2">
+            <CardTitle className="text-base font-semibold text-white flex items-center gap-2">
+              <UserCheck className="w-4 h-4 text-emerald-400" />
+              Health Call Activity
+            </CardTitle>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2.5 text-xs text-gray-400 hover:text-white gap-1.5"
+              onClick={() => navigate("/asha/patients")}
+            >
+              Call a patient
+            </Button>
+          </CardHeader>
+          <CardContent>
+            {callLogs.length === 0 ? (
+              <div className="py-10 flex flex-col items-center gap-3 text-center">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center">
+                  <Heart className="w-6 h-6 text-emerald-500/40" />
+                </div>
+                <p className="text-sm text-gray-500 font-medium">No health calls yet</p>
+                <p className="text-xs text-gray-600 max-w-xs">
+                  When you call a patient via AI, or a patient calls the health line, their updates appear here.
+                </p>
+                <Button
+                  size="sm"
+                  className="mt-1 bg-emerald-600/80 hover:bg-emerald-600 text-white text-xs gap-1.5"
+                  onClick={() => navigate("/asha/patients")}
+                >
+                  <UserCheck className="w-3.5 h-3.5" /> Go to Patients
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {callLogs.slice(0, 8).map((log) => {
+                  const isInbound  = log.direction === "inbound"
+                  const isUrgent   = log.urgency === "urgent" || log.visit_requested
+                  const typeIcons: Record<string, typeof Heart> = {
+                    health_check:  Heart,
+                    followup:      ClipboardList,
+                    reminder:      Clock,
+                    visit_request: MapPin,
+                  }
+                  const TypeIcon = typeIcons[log.call_type] ?? Heart
+                  const typeLabel: Record<string, string> = {
+                    health_check:  "Health Check",
+                    followup:      "Follow-up",
+                    reminder:      "Reminder",
+                    visit_request: "Visit Request",
+                    emergency:     "Emergency",
+                  }
+
+                  return (
+                    <div
+                      key={log.id}
+                      className={`flex items-start gap-3 p-3 rounded-xl border transition-colors ${
+                        isUrgent
+                          ? "bg-amber-500/[0.06] border-amber-500/20"
+                          : "bg-white/[0.025] border-white/[0.04] hover:bg-white/[0.04]"
+                      }`}
+                    >
+                      {/* Direction icon */}
+                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
+                        isInbound
+                          ? "bg-blue-500/15 text-blue-400"
+                          : "bg-emerald-500/15 text-emerald-400"
+                      }`}>
+                        {isInbound
+                          ? <PhoneIncoming className="w-3.5 h-3.5" />
+                          : <PhoneOutgoing className="w-3.5 h-3.5" />
+                        }
+                      </div>
+
+                      {/* Content */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-sm font-semibold text-white truncate">
+                            {log.patient_name || log.patient_phone}
+                          </p>
+                          <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
+                            log.call_type === "emergency"
+                              ? "bg-red-500/15 text-red-400"
+                              : "bg-white/[0.06] text-gray-400"
+                          }`}>
+                            <TypeIcon className="w-2.5 h-2.5" />
+                            {typeLabel[log.call_type] ?? log.call_type}
+                          </span>
+                          {log.visit_requested && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/20">
+                              VISIT REQUEST
+                            </span>
+                          )}
+                        </div>
+
+                        {(log.health_update || log.symptoms) && (
+                          <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">
+                            {log.health_update || log.symptoms}
+                          </p>
+                        )}
+
+                        <p className="text-[10px] text-gray-600 mt-1 flex items-center gap-1">
+                          <Clock className="w-2.5 h-2.5" />
+                          {log.created_at ? formatDate(log.created_at) : "—"}
+                          <span className="mx-1">·</span>
+                          {isInbound ? "Patient called in" : "You called out"}
+                        </p>
+                      </div>
+                    </div>
+                  )
+                })}
+
+                {callLogs.length > 8 && (
+                  <p className="text-xs text-gray-600 text-center pt-1">
+                    + {callLogs.length - 8} more entries
+                  </p>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </motion.div>
     </div>
   )
 }
