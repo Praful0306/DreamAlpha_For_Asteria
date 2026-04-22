@@ -229,10 +229,12 @@ async def asha_health_call_webhook(request: Request, tool: str = ""):
         "request_asha_visit":  _request_asha_visit,
         "get_health_advice":   _get_health_advice,
         "get_patient_for_asha": _get_patient_for_asha,
+        "transfer_to_asha":    _transfer_to_asha,
         # aliases
         "check_patient":       _identify_patient,
         "save_health_update":  _log_health_update,
         "request_visit":       _request_asha_visit,
+        "connect_to_asha":     _transfer_to_asha,
     }
 
     handler = handlers.get(name)
@@ -459,6 +461,100 @@ async def _get_patient_for_asha(args: dict, call: dict) -> str:
     return f"Hello {name}! {msg}"
 
 
+# ── Tool: transfer_to_asha ────────────────────────────────────────────────────
+
+async def _transfer_to_asha(args: dict, call: dict) -> str:
+    """
+    Patient asks to speak to their ASHA worker directly.
+    Returns the ASHA's phone number so Omnidim can transfer the call.
+    Response format understood by Omnidim custom-API transfer.
+    """
+    phone = (args.get("phone") or args.get("patient_phone") or "").strip()
+    p = _get_patient_by_phone(phone) if phone else None
+
+    if not p or not p.get("asha_worker_id"):
+        return (
+            "I'm sorry, I couldn't find your ASHA worker's details right now. "
+            "Please ask your ASHA worker to update their contact information in the portal."
+        )
+
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT full_name, phone FROM users WHERE id=:aid"),
+                {"aid": p["asha_worker_id"]},
+            ).fetchone()
+
+        if row and row[1]:
+            asha_name  = row[0] or "your ASHA worker"
+            asha_phone = row[1].strip()
+            if not asha_phone.startswith("+"):
+                asha_phone = "+91" + asha_phone.lstrip("0")
+            logger.info("transfer_to_asha: patient=%s → ASHA=%s phone=%s", phone, asha_name, asha_phone)
+            return (
+                f"Connecting you to {asha_name} now. "
+                f"Please hold while I transfer your call. "
+                f"TRANSFER_PHONE:{asha_phone}"
+            )
+    except Exception as exc:
+        logger.error("_transfer_to_asha: %s", exc)
+
+    return (
+        "I'm sorry, I couldn't reach your ASHA worker's phone right now. "
+        "Please try calling them directly or ask them to call you back."
+    )
+
+
+# ── Omnidim custom-API transfer endpoint (called by Omnidim for live transfer) ──
+
+@router.post("/omnidim/transfer-number")
+async def get_transfer_number(request: Request):
+    """
+    Omnidim calls this when is_custom_api_transfer_enabled is true.
+    Returns the ASHA worker's phone number for live SIP transfer.
+    Expected response: {"phone": "+91XXXXXXXXXX"}
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    phone = (body.get("phone") or body.get("patient_phone") or "").strip()
+    logger.info("transfer-number called: phone=%s", phone)
+
+    p = _get_patient_by_phone(phone) if phone else None
+    if p and p.get("asha_worker_id"):
+        try:
+            with engine.connect() as conn:
+                row = conn.execute(
+                    text("SELECT full_name, phone FROM users WHERE id=:aid"),
+                    {"aid": p["asha_worker_id"]},
+                ).fetchone()
+            if row and row[1]:
+                asha_phone = row[1].strip()
+                if not asha_phone.startswith("+"):
+                    asha_phone = "+91" + asha_phone.lstrip("0")
+                return _cors_response({
+                    "phone":       asha_phone,
+                    "name":        row[0] or "ASHA Worker",
+                    "transfer_to": asha_phone,   # alias
+                })
+        except Exception as exc:
+            logger.error("transfer-number DB error: %s", exc)
+
+    # Fallback: transfer to the Omnidim health line
+    return _cors_response({
+        "phone":       _omnidim_from_phone(),
+        "name":        "Health Helpline",
+        "transfer_to": _omnidim_from_phone(),
+    })
+
+
+@router.options("/omnidim/transfer-number")
+async def transfer_number_preflight():
+    return _cors_response({})
+
+
 # ── ASHA-triggered outbound call endpoint ─────────────────────────────────────
 
 @router.post("/asha/call-patient")
@@ -553,6 +649,21 @@ async def asha_trigger_outbound_call(request: Request):
     }
     first_message = custom_msg or FIRST_MSGS.get(call_type, FIRST_MSGS["health_check"])
 
+    # Fetch ASHA phone so agent can transfer if patient requests it
+    asha_phone = ""
+    if asha_id:
+        try:
+            with engine.connect() as conn:
+                ar = conn.execute(
+                    text("SELECT phone FROM users WHERE id=:aid"), {"aid": asha_id}
+                ).fetchone()
+            if ar and ar[0]:
+                asha_phone = ar[0].strip()
+                if not asha_phone.startswith("+"):
+                    asha_phone = "+91" + asha_phone.lstrip("0")
+        except Exception:
+            pass
+
     # Call Omnidim outbound API
     # Endpoint: POST https://backend.omnidim.io/api/v1/calls/dispatch
     # Ref: omnidimension Python SDK → Call.dispatch_call()
@@ -572,8 +683,10 @@ async def asha_trigger_outbound_call(request: Request):
                         "first_message":  first_message,
                         "patient_id":     str(patient_id),
                         "patient_name":   patient_name,
+                        "patient_phone":  patient_phone,
                         "asha_id":        str(asha_id or ""),
                         "asha_name":      asha_name,
+                        "asha_phone":     asha_phone,
                         "call_type":      call_type,
                         "lang":           lang,
                     },
