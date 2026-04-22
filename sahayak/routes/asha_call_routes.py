@@ -52,22 +52,39 @@ def _omnidim_from_phone() -> str: return os.getenv("OMNIDIM_PHONE_NUMBER",  "+91
 
 # ── payload parser (same flexible approach as omnidim_routes.py) ─────────────
 
-def _parse_body(body: dict) -> tuple[str, dict, dict]:
+_META_KEYS = frozenset({"toolName", "tool_name", "name", "call", "callInfo"})
+
+def _parse_body(body: dict, tool_override: str = "") -> tuple[str, dict, dict]:
+    """
+    Handles two call modes:
+      1. Omnidim webhook mode  — body has toolName + toolInputs wrapper
+      2. Omnidim direct mode   — body is flat {param: value, ...},
+                                  tool name comes from ?tool= query param
+    """
     name = (
-        body.get("toolName")
+        tool_override
+        or body.get("toolName")
         or body.get("tool_name")
         or body.get("name")
         or ""
     )
-    args = (
+
+    # Check for a wrapped args object first
+    args_wrapped = (
         body.get("toolInputs")
         or body.get("arguments")
         or body.get("parameters")
         or body.get("inputs")
-        or {}
     )
+
+    if args_wrapped is not None:
+        args = args_wrapped if isinstance(args_wrapped, dict) else {}
+    else:
+        # Flat body (Omnidim direct integration) — strip meta fields
+        args = {k: v for k, v in body.items() if k not in _META_KEYS}
+
     call = body.get("call") or body.get("callInfo") or {}
-    return name.strip(), (args if isinstance(args, dict) else {}), call
+    return name.strip(), args, call
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
@@ -168,17 +185,22 @@ def _save_call_log(
 # ── Main Omnidim webhook ──────────────────────────────────────────────────────
 
 @router.post("/omnidim/asha-health-call")
-async def asha_health_call_webhook(request: Request):
+async def asha_health_call_webhook(request: Request, tool: str = ""):
     """
     Omnidim calls this when the ASHA health-check agent needs live data.
     Returns { "result": "string" } — spoken aloud by the agent.
+
+    Supports two modes:
+      • Webhook mode  — POST body contains toolName + toolInputs
+      • Direct mode   — POST body is flat params, ?tool=<name> in URL
+                        (used by Omnidim Custom API Integration test)
     """
     try:
         body = await request.json()
     except Exception:
-        return {"result": "Sorry, there was a technical issue. Please call back."}
+        body = {}
 
-    name, args, call = _parse_body(body)
+    name, args, call = _parse_body(body, tool_override=tool)
     logger.info("ASHA health call tool: %s | args: %s", name, args)
 
     handlers = {
