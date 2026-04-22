@@ -580,9 +580,9 @@ async def asha_trigger_outbound_call(request: Request):
                 },
             )
             data = resp.json() if resp.content else {}
-            # Omnidim dispatch returns: {"call_id": "...", "status": "queued", ...}
+            # Omnidim dispatch returns: {"success":true,"requestId":...,"status":"dispatched"}
             call_id = (
-                data.get("call_id") or data.get("id")
+                data.get("requestId") or data.get("call_id") or data.get("id")
                 or data.get("callId") or data.get("call_log_id") or ""
             )
             call_id = str(call_id) if call_id else ""
