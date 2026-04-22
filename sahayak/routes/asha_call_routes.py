@@ -37,6 +37,7 @@ import os
 from datetime import datetime as dt
 from typing import Optional
 from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 import httpx
 
@@ -44,6 +45,22 @@ from db.database import engine
 
 logger = logging.getLogger("sahayak.asha_call")
 router = APIRouter(tags=["ASHA Call Agent"])
+
+# ── CORS helper for Omnidim endpoints ────────────────────────────────────────
+# Omnidim test calls come from varying origins; set headers directly so we
+# never hit a middleware miss regardless of which subdomain they use.
+
+def _cors_response(data: dict) -> JSONResponse:
+    resp = JSONResponse(data)
+    resp.headers["Access-Control-Allow-Origin"]  = "*"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "*"
+    return resp
+
+
+@router.options("/omnidim/asha-health-call")
+async def asha_health_call_preflight():
+    return _cors_response({})
 
 def _omnidim_secret()     -> str: return os.getenv("OMNIDIM_SECRET_KEY",  "c4461557c2e29b4c60f62494f09c181c")
 def _omnidim_asha_agent() -> str: return os.getenv("OMNIDIM_ASHA_AGENT_ID", "")   # read at request time — never cached
@@ -199,8 +216,10 @@ async def asha_health_call_webhook(request: Request, tool: str = ""):
         body = await request.json()
     except Exception:
         body = {}
+        logger.warning("asha_health_call: could not parse JSON body")
 
     name, args, call = _parse_body(body, tool_override=tool)
+    logger.info("asha_health_call tool=%r args_keys=%s", name, list(args.keys()))
     logger.info("ASHA health call tool: %s | args: %s", name, args)
 
     handlers = {
@@ -217,14 +236,14 @@ async def asha_health_call_webhook(request: Request, tool: str = ""):
 
     handler = handlers.get(name)
     if not handler:
-        return {"result": "I couldn't process that request. Please try again."}
+        return _cors_response({"result": "I couldn't process that request. Please try again."})
 
     try:
         result = await handler(args, call)
-        return {"result": result}
+        return _cors_response({"result": result})
     except Exception as exc:
         logger.error("ASHA health call tool %s failed: %s", name, exc, exc_info=True)
-        return {"result": "The system is temporarily unavailable. Your ASHA worker will be notified."}
+        return _cors_response({"result": "The system is temporarily unavailable. Your ASHA worker will be notified."})
 
 
 # ── Tool: identify_patient ────────────────────────────────────────────────────
