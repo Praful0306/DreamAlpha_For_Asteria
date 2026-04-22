@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { RiskBadge } from "@/components/shared/RiskBadge"
 import { useStore } from "@/store/useStore"
-import { getDoctorPatients, type Patient } from "@/lib/api"
+import { getDoctorPatients, getDoctorAppointments, type Patient, type AppointmentItem } from "@/lib/api"
 import { formatDate } from "@/lib/utils"
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
@@ -132,28 +132,37 @@ function PatientCard({ p, index, onClick }: { p: Patient; index: number; onClick
 export default function DoctorDashboard() {
   const navigate                = useNavigate()
   const { user }                = useStore()
-  const [patients,  setPatients]  = useState<Patient[]>([])
-  const [loading,   setLoading]   = useState(true)
-  const [fetchErr,  setFetchErr]  = useState("")
+  const [patients,   setPatients]   = useState<Patient[]>([])
+  const [todayAppts, setTodayAppts] = useState<AppointmentItem[]>([])
+  const [loading,    setLoading]    = useState(true)
+  const [fetchErr,   setFetchErr]   = useState("")
 
-  const fetchPatients = useCallback(() => {
+  const doctorId = (user as any)?.id as number | undefined
+
+  const fetchData = useCallback(() => {
     setFetchErr("")
-    getDoctorPatients()
-      .then(p => { setPatients(p); setLoading(false) })
+    const prom1 = getDoctorPatients()
+      .then(p => setPatients(p))
       .catch(err => {
         setFetchErr(err instanceof Error ? err.message : "Failed to load patients")
         setPatients([])
-        setLoading(false)
       })
-  }, [])
+    const prom2 = doctorId
+      ? getDoctorAppointments(doctorId, 1)
+          .then(a => setTodayAppts(a.filter(x => x.is_today)))
+          .catch(() => {})
+      : Promise.resolve()
+    Promise.all([prom1, prom2]).finally(() => setLoading(false))
+  }, [doctorId])
 
   useEffect(() => {
-    fetchPatients()
-    // Refetch when window regains focus (picks up newly added patients / new reports)
-    const onFocus = () => fetchPatients()
+    fetchData()
+    const onFocus = () => fetchData()
     window.addEventListener("focus", onFocus)
-    return () => window.removeEventListener("focus", onFocus)
-  }, [fetchPatients])
+    // Auto-refresh every 30s so new bookings appear in real-time
+    const interval = setInterval(fetchData, 30_000)
+    return () => { window.removeEventListener("focus", onFocus); clearInterval(interval) }
+  }, [fetchData])
 
   // Derived chart data
   const riskDist = Object.entries(
@@ -165,10 +174,10 @@ export default function DoctorDashboard() {
   ).map(([name, value]) => ({ name, value }))
 
   const stats = [
-    { label: "Total Patients",  value: patients.length,                                                                                     icon: Users,         color: "text-blue-400"   },
-    { label: "High Risk",       value: patients.filter(p => ["HIGH","EMERGENCY"].includes(p.risk_level ?? p.last_risk_level ?? "")).length,  icon: AlertTriangle, color: "text-red-400"    },
-    { label: "Active Today",    value: Math.ceil(patients.length * 0.3),                                                                     icon: Activity,      color: "text-green-400"  },
-    { label: "Appointments",    value: 3,                                                                                                    icon: Calendar,      color: "text-purple-400" },
+    { label: "Total Patients",    value: patients.length,                                                                                      icon: Users,         color: "text-blue-400"   },
+    { label: "High Risk",         value: patients.filter(p => ["HIGH","EMERGENCY"].includes(p.risk_level ?? p.last_risk_level ?? "")).length,   icon: AlertTriangle, color: "text-red-400"    },
+    { label: "Active Today",      value: Math.ceil(patients.length * 0.3),                                                                     icon: Activity,      color: "text-green-400"  },
+    { label: "Today's Appts",     value: todayAppts.length,                                                                                    icon: Calendar,      color: "text-purple-400" },
   ]
 
   return (
@@ -383,6 +392,71 @@ export default function DoctorDashboard() {
         </motion.div>
       </div>
 
+      {/* ── TODAY'S APPOINTMENTS ─────────────────────────────────────────────── */}
+      <motion.div variants={fadeUp} initial="hidden" animate="visible" custom={8}>
+        <Card className="bg-[#1a1a22] border-[#2a2a35]">
+          <CardHeader className="flex-row items-center justify-between pb-3">
+            <CardTitle className="text-base font-semibold text-white flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-purple-400" />
+              Today's Appointments
+              {todayAppts.length > 0 && (
+                <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-400 border border-purple-500/25">
+                  {todayAppts.length} booked
+                </span>
+              )}
+            </CardTitle>
+            <Button
+              variant="ghost" size="sm"
+              className="text-xs text-gray-400 hover:text-white"
+              onClick={() => navigate("/doctor/appointments")}
+            >
+              View all →
+            </Button>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="space-y-2">
+                {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12 bg-white/5 rounded-xl" />)}
+              </div>
+            ) : todayAppts.length === 0 ? (
+              <div className="py-8 text-center">
+                <Calendar className="w-8 h-8 text-gray-700 mx-auto mb-2" />
+                <p className="text-sm text-gray-500">No appointments booked for today yet</p>
+                <p className="text-xs text-gray-600 mt-1">Patients booking via the AI voice agent will appear here in real-time</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {todayAppts.slice(0, 6).map((a, i) => (
+                  <motion.div
+                    key={a.id}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: i * 0.05 }}
+                    className="flex items-center gap-3 p-3 rounded-xl border border-white/[0.05] bg-white/[0.02] hover:bg-white/[0.04] transition-colors"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-purple-500/15 flex items-center justify-center shrink-0">
+                      <span className="text-xs font-bold text-purple-400">{a.time?.slice(0,5) || "--"}</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-white truncate">{a.patient_name || "Unknown"}</p>
+                      <p className="text-xs text-gray-500 truncate">{a.reason || "Doctor consultation"}</p>
+                    </div>
+                    {a.is_manual && (
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/20 shrink-0">
+                        PRIORITY
+                      </span>
+                    )}
+                  </motion.div>
+                ))}
+                {todayAppts.length > 6 && (
+                  <p className="text-xs text-gray-600 text-center pt-1">+{todayAppts.length - 6} more — <button onClick={() => navigate("/doctor/appointments")} className="text-purple-400 hover:underline">View all</button></p>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </motion.div>
+
       {/* ── MY PATIENTS ──────────────────────────────────────────────────────── */}
       <motion.div variants={fadeUp} initial="hidden" animate="visible" custom={8}>
         <Card className="bg-[#1a1a22] border-[#2a2a35]">
@@ -396,7 +470,7 @@ export default function DoctorDashboard() {
             </CardTitle>
             <div className="flex items-center gap-2">
               <button
-                onClick={fetchPatients}
+                onClick={fetchData}
                 className="p-1.5 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-white/5 transition-all"
                 title="Refresh patient list"
               >
@@ -426,7 +500,7 @@ export default function DoctorDashboard() {
                   <p className="text-gray-600 text-xs mt-1 max-w-xs">{fetchErr}</p>
                 </div>
                 <button
-                  onClick={fetchPatients}
+                  onClick={fetchData}
                   className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white text-sm transition-all"
                 >
                   <RefreshCw className="w-3.5 h-3.5" /> Retry

@@ -30,6 +30,7 @@ import logging
 from datetime import datetime as dt, timedelta
 from typing import List
 from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from db.database import engine
@@ -39,6 +40,21 @@ logger = logging.getLogger("sahayak.omnidim")
 router = APIRouter(prefix="/omnidim", tags=["Omnidim Voice Agent"])
 
 DOCTOR_ID_DEFAULT = 1   # fallback when doctor_id not specified
+
+
+# ── CORS helper (same pattern as asha_call_routes) ────────────────────────────
+
+def _cors_response(data: dict) -> JSONResponse:
+    resp = JSONResponse(data)
+    resp.headers["Access-Control-Allow-Origin"]  = "*"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "*"
+    return resp
+
+
+@router.options("/tool-call")
+async def tool_call_preflight():
+    return _cors_response({})
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -87,46 +103,51 @@ def _fmt_time(slot: str) -> str:
 
 # ── normalise different Omnidim payload shapes ────────────────────────────────
 
-def _parse_body(body: dict) -> tuple[str, dict, dict]:
+_APPT_META_KEYS = frozenset({"toolName", "tool_name", "name", "call", "callInfo"})
+
+def _parse_body(body: dict, tool_override: str = "") -> tuple[str, dict, dict]:
     """
-    Omnidim may send:
-      { "toolName": "...", "toolInputs": {...}, "call": {...} }
-      { "name": "...",     "arguments": {...},  "call": {...} }
-      { "tool_name": "..","parameters": {...},  "call": {...} }
-    Returns (tool_name, args_dict, call_dict).
+    Supports two Omnidim call modes:
+      1. Webhook mode  — body has toolName + toolInputs
+      2. Direct mode   — body is flat {param: value}, tool name from ?tool= query param
     """
     name = (
-        body.get("toolName")
+        tool_override
+        or body.get("toolName")
         or body.get("tool_name")
         or body.get("name")
         or ""
     )
-    args = (
+    args_wrapped = (
         body.get("toolInputs")
         or body.get("arguments")
         or body.get("parameters")
         or body.get("inputs")
-        or {}
     )
+    if args_wrapped is not None:
+        args = args_wrapped if isinstance(args_wrapped, dict) else {}
+    else:
+        args = {k: v for k, v in body.items() if k not in _APPT_META_KEYS}
     call = body.get("call") or body.get("callInfo") or {}
-    return name.strip(), (args if isinstance(args, dict) else {}), call
+    return name.strip(), args, call
 
 
 # ── main webhook ──────────────────────────────────────────────────────────────
 
 @router.post("/tool-call")
-async def omnidim_tool_call(request: Request):
+async def omnidim_tool_call(request: Request, tool: str = ""):
     """
     Omnidim calls this endpoint when the voice agent needs live data.
     Returns { "result": "string" } — the string is read aloud by the agent.
+    Supports ?tool= query param for flat-body (Custom API Integration) mode.
     """
     try:
         body = await request.json()
     except Exception:
-        return {"result": "Error reading your request. Please try again."}
+        body = {}
 
-    name, args, call = _parse_body(body)
-    logger.info("Omnidim tool call: %s | args: %s", name, args)
+    name, args, call = _parse_body(body, tool_override=tool)
+    logger.info("Omnidim appt tool=%r args_keys=%s", name, list(args.keys()))
 
     handlers = {
         "register_patient":    _register_patient,
@@ -139,14 +160,14 @@ async def omnidim_tool_call(request: Request):
 
     handler = handlers.get(name)
     if not handler:
-        return {"result": f"I'm sorry, I couldn't process that request. Please say 'start over'."}
+        return _cors_response({"result": "I'm sorry, I couldn't process that request. Please say 'start over'."})
 
     try:
         result = await handler(args, call)
-        return {"result": result}
+        return _cors_response({"result": result})
     except Exception as exc:
         logger.error("Omnidim tool %s failed: %s", name, exc, exc_info=True)
-        return {"result": "The system is temporarily unavailable. Please call back in a moment."}
+        return _cors_response({"result": "The system is temporarily unavailable. Please call back in a moment."})
 
 
 # ── Tool: register_patient ────────────────────────────────────────────────────
