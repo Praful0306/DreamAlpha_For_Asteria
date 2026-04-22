@@ -113,7 +113,7 @@ _ALLOWED_ORIGINS = list(set([
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED_ORIGINS,
-    allow_origin_regex=r"https://.*\.vercel\.app",   # allow all Vercel preview URLs
+    allow_origin_regex=r"https://(.*\.vercel\.app|.*\.omnidim\.io|app\.omnidim\.io)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
