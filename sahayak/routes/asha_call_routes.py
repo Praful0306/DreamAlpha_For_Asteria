@@ -553,31 +553,38 @@ async def asha_trigger_outbound_call(request: Request):
     first_message = custom_msg or FIRST_MSGS.get(call_type, FIRST_MSGS["health_check"])
 
     # Call Omnidim outbound API
+    # Endpoint: POST https://backend.omnidim.io/api/v1/calls/dispatch
+    # Ref: omnidimension Python SDK → Call.dispatch_call()
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
-                "https://api.omnidim.io/v1/calls/outbound",
+                "https://backend.omnidim.io/api/v1/calls/dispatch",
                 headers={
                     "Authorization": f"Bearer {_omnidim_secret()}",
                     "Content-Type":  "application/json",
+                    "Accept":        "application/json",
                 },
                 json={
-                    "agent_id":      agent_id,
-                    "from_number":   _omnidim_from_phone(),
-                    "to_number":     patient_phone,
-                    "first_message": first_message,
-                    "metadata": {
-                        "patient_id":   patient_id,
-                        "patient_name": patient_name,
-                        "asha_id":      asha_id,
-                        "asha_name":    asha_name,
-                        "call_type":    call_type,
-                        "lang":         lang,
+                    "agent_id":  int(agent_id),
+                    "to_number": patient_phone,
+                    "call_context": {
+                        "first_message":  first_message,
+                        "patient_id":     str(patient_id),
+                        "patient_name":   patient_name,
+                        "asha_id":        str(asha_id or ""),
+                        "asha_name":      asha_name,
+                        "call_type":      call_type,
+                        "lang":           lang,
                     },
                 },
             )
             data = resp.json() if resp.content else {}
-            call_id = data.get("call_id") or data.get("id") or ""
+            # Omnidim dispatch returns: {"call_id": "...", "status": "queued", ...}
+            call_id = (
+                data.get("call_id") or data.get("id")
+                or data.get("callId") or data.get("call_log_id") or ""
+            )
+            call_id = str(call_id) if call_id else ""
 
             log_id = _save_call_log(
                 direction="outbound",
