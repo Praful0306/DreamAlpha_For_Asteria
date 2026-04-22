@@ -63,6 +63,7 @@ async def asha_health_call_preflight():
     return _cors_response({})
 
 def _omnidim_secret()     -> str: return os.getenv("OMNIDIM_SECRET_KEY",  "c4461557c2e29b4c60f62494f09c181c")
+def _omnidim_api_key()    -> str: return os.getenv("OMNIDIM_API_KEY",      "")    # for outbound call API
 def _omnidim_asha_agent() -> str: return os.getenv("OMNIDIM_ASHA_AGENT_ID", "")   # read at request time — never cached
 def _omnidim_from_phone() -> str: return os.getenv("OMNIDIM_PHONE_NUMBER",  "+912271263971")
 
@@ -560,7 +561,7 @@ async def asha_trigger_outbound_call(request: Request):
             resp = await client.post(
                 "https://backend.omnidim.io/api/v1/calls/dispatch",
                 headers={
-                    "Authorization": f"Bearer {_omnidim_secret()}",
+                    "Authorization": f"Bearer {_omnidim_api_key() or _omnidim_secret()}",
                     "Content-Type":  "application/json",
                     "Accept":        "application/json",
                 },
