@@ -177,6 +177,7 @@ async def health():
     except Exception:
         pass
 
+    _omni_key = os.getenv("OMNIDIM_API_KEY", "")
     return {
         "status" : "healthy",
         "version": "3.3.0",
@@ -184,6 +185,11 @@ async def health():
             "llama_70b"    : {"id": LLAMA_MODEL_ID,   "enabled": has_llama},
             "mixtral_8x7b" : {"id": MIXTRAL_MODEL_ID, "enabled": has_mixtral},
             "groq_fallback": {"id": GROQ_LLM_MODEL,   "enabled": has_groq},
+        },
+        "omnidim": {
+            "api_key_set":    bool(_omni_key),
+            "api_key_prefix": _omni_key[:4] if _omni_key else "",
+            "agent_id":       os.getenv("OMNIDIM_ASHA_AGENT_ID", ""),
         },
         "npu": npu_info,
         "features": {
