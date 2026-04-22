@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react"
+import React, { useEffect, useState, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
 import { motion } from "framer-motion"
 import {
@@ -41,6 +41,33 @@ function useOmnidimWidget() {
 
     return () => {
       try { document.body.removeChild(script) } catch { /* already removed */ }
+    }
+  }, [])
+
+  // Returns a function that opens the Omnidim widget programmatically
+  return useCallback(() => {
+    const w = window as any
+    // Try official Omnidim JS API
+    if (typeof w.OmnidimWidget?.open === "function") { w.OmnidimWidget.open(); return }
+    if (typeof w.omnidim?.open === "function")        { w.omnidim.open();        return }
+    // Try clicking the floating launcher button by common selectors
+    const selectors = [
+      "#omnidim-widget-button", "#omnidim-launcher", ".omnidim-launcher",
+      "[data-omnidim-launcher]", "[id*='omnidim'][id*='button']",
+      "[id*='omnidim'][id*='launch']", "[class*='omnidim-launch']",
+    ]
+    for (const sel of selectors) {
+      const el = document.querySelector(sel) as HTMLElement | null
+      if (el) { el.click(); return }
+    }
+    // Fallback: find any element injected by omnidim script (fixed-position button)
+    const all = document.querySelectorAll("button, div[role='button']")
+    for (const el of Array.from(all)) {
+      const id = (el as HTMLElement).id ?? ""
+      const cls = (el as HTMLElement).className ?? ""
+      if (id.includes("omnidim") || cls.includes("omnidim")) {
+        (el as HTMLElement).click(); return
+      }
     }
   }, [])
 }
@@ -115,8 +142,8 @@ export default function PatientDashboard() {
   const [ashaContact,  setAshaContact]  = useState<AshaContact | null>(null)
   const [loading,      setLoading]      = useState(true)
 
-  // Load Omnidim floating widget (no-op if env var not set)
-  useOmnidimWidget()
+  // Load Omnidim floating widget + get open callback
+  const openBookingWidget = useOmnidimWidget()
 
   const fetchAll = useCallback(() => {
     if (!user) { setLoading(false); return }
@@ -214,13 +241,13 @@ export default function PatientDashboard() {
     },
   ]
 
-  const actions = [
-    { label: "AI Diagnosis",  sub: "Describe symptoms", icon: Mic,      href: "/patient/diagnose", grad: "from-orange-600 to-orange-500" },
-    { label: "Upload Report", sub: "PDF / image scan",  icon: Upload,   href: "/patient/upload",   grad: "from-blue-600 to-blue-500" },
-    { label: "View Reports",  sub: "All your records",  icon: FileText, href: "/patient/reports",  grad: "from-purple-600 to-purple-500" },
-    { label: "Share Access",  sub: "With your doctor",  icon: Share2,   href: "/patient/access",   grad: "from-emerald-600 to-emerald-500" },
-    { label: "Call Doctor",   sub: "Book appointment",  icon: Phone,    href: "/patient/call",     grad: "from-sky-600 to-blue-500" },
-    { label: "Call ASHA",     sub: "Health guidance",   icon: Heart,    href: "/patient/call",     grad: "from-pink-600 to-rose-500" },
+  const actions: { label: string; sub: string; icon: React.ElementType; href?: string; action?: () => void; grad: string }[] = [
+    { label: "AI Diagnosis",  sub: "Describe symptoms", icon: Mic,      href: "/patient/diagnose",   grad: "from-orange-600 to-orange-500" },
+    { label: "Upload Report", sub: "PDF / image scan",  icon: Upload,   href: "/patient/upload",     grad: "from-blue-600 to-blue-500" },
+    { label: "View Reports",  sub: "All your records",  icon: FileText, href: "/patient/reports",    grad: "from-purple-600 to-purple-500" },
+    { label: "Share Access",  sub: "With your doctor",  icon: Share2,   href: "/patient/access",     grad: "from-emerald-600 to-emerald-500" },
+    { label: "Call Doctor",   sub: "Book appointment",  icon: Phone,    action: openBookingWidget,   grad: "from-sky-600 to-blue-500" },
+    { label: "Call ASHA",     sub: "Health guidance",   icon: Heart,    href: "/patient/call",       grad: "from-pink-600 to-rose-500" },
   ]
 
   return (
@@ -367,7 +394,7 @@ export default function PatientDashboard() {
             {actions.map((a) => {
               const Icon = a.icon
               return (
-                <button key={a.label} onClick={() => navigate(a.href)}
+                <button key={a.label} onClick={() => a.action ? a.action() : navigate(a.href!)}
                   className={`group relative overflow-hidden rounded-xl p-3.5 text-left bg-gradient-to-br ${a.grad} hover:brightness-110 active:scale-95 transition-all duration-150`}>
                   <Icon className="w-5 h-5 text-white mb-2" />
                   <p className="text-white text-xs font-semibold leading-tight">{a.label}</p>
@@ -425,9 +452,9 @@ export default function PatientDashboard() {
               Call +91 22 7126 3971
             </a>
 
-            {/* In-app voice booking */}
+            {/* In-app voice booking — opens Omnidim widget */}
             <button
-              onClick={() => navigate("/patient/call")}
+              onClick={openBookingWidget}
               className="flex-1 flex items-center justify-center gap-2.5 py-3 rounded-xl font-semibold text-white text-sm border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] transition-all active:scale-95"
             >
               <Mic className="w-4 h-4 text-brand-400" />
