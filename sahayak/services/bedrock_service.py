@@ -132,21 +132,50 @@ def _invoke_gemini(api_key: str, system_prompt: str, user_prompt: str, max_token
 # ── Groq fallback ─────────────────────────────────────────────────────────────
 
 def _invoke_groq(api_key: str, system_prompt: str, user_prompt: str, max_tokens: int = 2048, temperature: float = 0.2) -> str:
-    """Call Groq API using the groq SDK."""
+    """Call Groq API — tries preferred model then falls back to stable alternatives."""
     if not api_key:
         raise RuntimeError("Groq key is empty")
     from groq import Groq
-    client = Groq(api_key=api_key)
-    response = client.chat.completions.create(
-        model=GROQ_LLM_MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user",   "content": user_prompt},
-        ],
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-    return response.choices[0].message.content
+    import httpx
+    client = Groq(api_key=api_key, http_client=httpx.Client(timeout=30.0))
+
+    # Try models in order — first available wins
+    models_to_try = [
+        GROQ_LLM_MODEL,
+        "meta-llama/llama-4-scout-17b-16e-instruct",
+        "llama-3.3-70b-versatile",
+        "llama3-70b-8192",
+        "llama-3.1-8b-instant",
+        "mixtral-8x7b-32768",
+    ]
+    # Deduplicate while preserving order
+    seen, ordered = set(), []
+    for m in models_to_try:
+        if m and m not in seen:
+            seen.add(m); ordered.append(m)
+
+    last_err = None
+    for model in ordered:
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user",   "content": user_prompt},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            text = response.choices[0].message.content
+            if text and text.strip():
+                logger.info("Groq success with model: %s", model)
+                return text
+        except Exception as e:
+            logger.warning("Groq model %s failed: %s", model, e)
+            last_err = e
+            continue
+
+    raise RuntimeError(f"All Groq models failed. Last error: {last_err}")
 
 
 # ── Ollama local fallback ─────────────────────────────────────────────────────
