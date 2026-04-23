@@ -206,10 +206,13 @@ def call_llm(
     Never crashes — always returns a result if Ollama is running locally.
     """
     attempts = [
-        ("LLaMA 70B (AWS)",    lambda: _invoke_llama(system_prompt, user_prompt, max_tokens, temperature)),
-        ("Mixtral 8x7B (AWS)", lambda: _invoke_mixtral(system_prompt, user_prompt, max_tokens, temperature)),
+        # Groq first — fast and free, no AWS setup needed
         ("Groq key-1",         lambda: _invoke_groq(GROQ_API_KEY_1, system_prompt, user_prompt, max_tokens, temperature)),
         ("Groq key-2",         lambda: _invoke_groq(GROQ_API_KEY_2, system_prompt, user_prompt, max_tokens, temperature)),
+        # AWS Bedrock fallback (requires IAM keys)
+        ("LLaMA 70B (AWS)",    lambda: _invoke_llama(system_prompt, user_prompt, max_tokens, temperature)),
+        ("Mixtral 8x7B (AWS)", lambda: _invoke_mixtral(system_prompt, user_prompt, max_tokens, temperature)),
+        # Offline fallback
         ("Ollama local",       lambda: _invoke_ollama(system_prompt, user_prompt, max_tokens, temperature)),
     ]
 
