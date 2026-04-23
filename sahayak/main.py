@@ -42,6 +42,7 @@ def _validate_env():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import asyncio
     _validate_env()
     try:
         from db.database import init_db
@@ -52,28 +53,7 @@ async def lifespan(app: FastAPI):
     for d in ("static/audio", "static/referrals", "static/reports"):
         os.makedirs(os.path.join(BASE_DIR, d), exist_ok=True)
 
-    # Pre-load faster-whisper at startup so first voice request is instant
-    try:
-        from services.asr_service import _get_whisper_model
-        import asyncio
-        logger.info("Pre-loading faster-whisper tiny (offline, int8)…")
-        await asyncio.get_event_loop().run_in_executor(None, _get_whisper_model)
-        logger.info("faster-whisper ready ✓ — voice transcription is OFFLINE")
-    except Exception as e:
-        logger.warning(f"faster-whisper pre-load failed: {e}")
-
-    # Pre-load EasyOCR at startup so first upload is instant
-    try:
-        from services.ocr_service import _get_easyocr_reader
-        import asyncio
-        logger.info("Pre-loading EasyOCR model (en + hi)…")
-        await asyncio.get_event_loop().run_in_executor(None, _get_easyocr_reader)
-        logger.info("EasyOCR model ready ✓")
-    except Exception as e:
-        logger.warning(f"EasyOCR pre-load failed (will lazy-load on first request): {e}")
-
-    # AMD Ryzen AI NPU — attempt to load Phi-3-Mini on NPU
-    # Graceful: never crashes server if model file absent or onnxruntime missing
+    # AMD Ryzen AI NPU — fast check, stays in startup (demo mode if model absent)
     try:
         from services.npu_service import npu_service
         loaded = npu_service.load_phi3_npu()
@@ -84,7 +64,29 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"NPU init skipped: {e}")
 
-    logger.info("Sahayak AI v3.2 started — http://localhost:8000/api/docs")
+    # Heavy models (faster-whisper + EasyOCR) load in the BACKGROUND after startup.
+    # This keeps the app ready to serve /health immediately so Render's 5-second
+    # health check passes.  Models lazy-load on first real request anyway if this
+    # background task hasn't finished yet — zero functionality loss.
+    async def _preload_models():
+        await asyncio.sleep(15)  # give health check time to pass first
+        try:
+            from services.asr_service import _get_whisper_model
+            logger.info("BG: pre-loading faster-whisper tiny (offline, int8)…")
+            await asyncio.to_thread(_get_whisper_model)
+            logger.info("BG: faster-whisper ready ✓ — voice transcription is OFFLINE")
+        except Exception as e:
+            logger.warning(f"BG: faster-whisper pre-load failed: {e}")
+        try:
+            from services.ocr_service import _get_easyocr_reader
+            logger.info("BG: pre-loading EasyOCR model (en + hi)…")
+            await asyncio.to_thread(_get_easyocr_reader)
+            logger.info("BG: EasyOCR model ready ✓")
+        except Exception as e:
+            logger.warning(f"BG: EasyOCR pre-load failed (will lazy-load on first request): {e}")
+
+    asyncio.create_task(_preload_models())
+    logger.info("Sahayak AI v3.3 started — http://localhost:8000/api/docs")
     yield
     logger.info("Sahayak AI shutting down")
 
