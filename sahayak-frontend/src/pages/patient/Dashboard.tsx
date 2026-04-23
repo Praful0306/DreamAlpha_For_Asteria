@@ -17,6 +17,7 @@ import {
 } from "@/lib/api"
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts"
 import { formatDate } from "@/lib/utils"
+import VoiceBookingSession from "./VoiceBookingSession"
 
 /* ── Omnidim widget loader ────────────────────────────────────────────────────
    Set VITE_OMNIDIM_WIDGET_SRC in .env.local to the script src URL from your
@@ -142,8 +143,12 @@ export default function PatientDashboard() {
   const [ashaContact,  setAshaContact]  = useState<AshaContact | null>(null)
   const [loading,      setLoading]      = useState(true)
 
-  // Load Omnidim floating widget + get open callback
-  const openBookingWidget = useOmnidimWidget()
+  // Load Omnidim floating widget (tiny corner button — still available)
+  useOmnidimWidget()
+
+  // In-app voice booking modal state
+  const [showVoiceModal, setShowVoiceModal] = useState(false)
+  const openBookingWidget = useCallback(() => setShowVoiceModal(true), [])
 
   const fetchAll = useCallback(() => {
     if (!user) { setLoading(false); return }
@@ -695,6 +700,20 @@ export default function PatientDashboard() {
             ))}
           </div>
         </motion.div>
+      )}
+
+      {/* ── VOICE BOOKING MODAL ── */}
+      {showVoiceModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+          onClick={e => { if (e.target === e.currentTarget) setShowVoiceModal(false) }}>
+          <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto">
+            <VoiceBookingSession
+              reason="appointment"
+              reasonLabel="Doctor Appointment"
+              onClose={() => setShowVoiceModal(false)}
+            />
+          </div>
+        </div>
       )}
     </div>
   )
