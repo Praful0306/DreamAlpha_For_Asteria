@@ -140,32 +140,71 @@ function spokenToSlot(spoken: string, avail: string[]): string | null {
   })
 }
 
-/* ── TTS helper — with timeout fallback for Chrome onend bug ───────────────── */
-function speakText(text: string, lang: string, onEnd?: () => void) {
-  window.speechSynthesis.cancel()
-  const u = new SpeechSynthesisUtterance(text.replace(/\*\*(.*?)\*\*/g, "$1"))
-  u.lang  = lang
-  u.rate  = 0.88
-  u.pitch = 1.05
+/* ── TTS helper — robust voice selection + Chrome onend fallback ────────────── */
+function getBestVoice(lang: string): SpeechSynthesisVoice | null {
+  const voices = window.speechSynthesis.getVoices()
+  if (!voices.length) return null
+  // 1. Exact match (e.g. "en-IN")
+  const exact = voices.find(v => v.lang === lang)
+  if (exact) return exact
+  // 2. Language prefix match (e.g. "en" for "en-IN")
+  const prefix = lang.split("-")[0]
+  const partial = voices.find(v => v.lang.startsWith(prefix))
+  if (partial) return partial
+  // 3. Any English voice as last resort
+  const english = voices.find(v => v.lang.startsWith("en"))
+  return english ?? null
+}
 
-  let done = false
-  const finish = () => {
-    if (done) return
-    done = true
-    // Extra 800ms silence after TTS ends before handing back control
-    // This prevents the mic from picking up speaker echo
-    setTimeout(() => onEnd?.(), 800)
+function speakText(text: string, lang: string, onEnd?: () => void) {
+  if (!window.speechSynthesis) { onEnd?.(); return }
+
+  window.speechSynthesis.cancel()
+
+  const doSpeak = () => {
+    const u = new SpeechSynthesisUtterance(text.replace(/\*\*(.*?)\*\*/g, "$1"))
+    const voice = getBestVoice(lang)
+    if (voice) u.voice = voice
+    u.lang  = voice ? voice.lang : lang
+    u.rate  = 0.88
+    u.pitch = 1.05
+    u.volume = 1
+
+    let done = false
+    const finish = () => {
+      if (done) return
+      done = true
+      setTimeout(() => onEnd?.(), 600)
+    }
+
+    u.onerror = () => finish()
+
+    // Chrome bug: onend sometimes never fires — fallback after estimated duration
+    const wordCount = text.split(/\s+/).length
+    const timeoutMs = Math.max(5000, wordCount * 400 + 2000)
+    const timer = setTimeout(finish, timeoutMs)
+    u.onend = () => { clearTimeout(timer); finish() }
+
+    window.speechSynthesis.speak(u)
   }
 
-  u.onerror = finish
-
-  // Chrome bug: onend sometimes never fires — fallback after estimated duration
-  const wordCount = text.split(/\s+/).length
-  const timeoutMs = Math.max(4000, wordCount * 380 + 2000)
-  const timer = setTimeout(finish, timeoutMs)
-  u.onend = () => { clearTimeout(timer); finish() }
-
-  window.speechSynthesis.speak(u)
+  // Voices may not be loaded yet on first call — wait for them
+  const voices = window.speechSynthesis.getVoices()
+  if (voices.length > 0) {
+    doSpeak()
+  } else {
+    // Chrome loads voices async — listen for onvoiceschanged then speak
+    const handler = () => {
+      window.speechSynthesis.removeEventListener("voiceschanged", handler)
+      doSpeak()
+    }
+    window.speechSynthesis.addEventListener("voiceschanged", handler)
+    // Safety: if event never fires (Firefox etc.), speak anyway after 500ms
+    setTimeout(() => {
+      window.speechSynthesis.removeEventListener("voiceschanged", handler)
+      doSpeak()
+    }, 500)
+  }
 }
 
 /* ── Receipt PDF ───────────────────────────────────────────────────────────── */
