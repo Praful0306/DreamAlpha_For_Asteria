@@ -95,7 +95,11 @@ async def generate_diagnosis(
 
     llm_raw = ""
     try:
-        llm_raw = call_llm(system_prompt, user_prompt, model="llama", max_tokens=1000)
+        import asyncio
+        # Run sync call_llm in a thread so it doesn't block the async event loop
+        llm_raw = await asyncio.to_thread(
+            call_llm, system_prompt, user_prompt, "llama", 400
+        )
     except Exception as e:
         logger.error("All LLM backends failed: %s", e)
         # Fallback to a basic template if all LLMs are down

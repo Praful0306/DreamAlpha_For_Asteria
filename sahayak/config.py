@@ -35,8 +35,8 @@ VISION_LLM_MODEL = os.getenv("VISION_LLM_MODEL", "llama-3.2-90b-vision-preview")
 # ── Groq — LLM fallback (2 keys, used if both AWS models fail) ───────────────
 GROQ_API_KEY_1        = os.getenv("GROQ_API_KEY_1", "")
 GROQ_API_KEY_2        = os.getenv("GROQ_API_KEY_2", "")
-GROQ_LLM_MODEL        = os.getenv("GROQ_LLM_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")  # for diagnosis chat
-GROQ_EXTRACTION_MODEL = os.getenv("GROQ_EXTRACTION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")  # for extraction
+GROQ_LLM_MODEL        = os.getenv("GROQ_LLM_MODEL",        "llama-3.1-8b-instant")  # fastest Groq model
+GROQ_EXTRACTION_MODEL = os.getenv("GROQ_EXTRACTION_MODEL", "llama-3.1-8b-instant")  # fastest for extraction
 
 # ── Database ──────────────────────────────────────────────────────────────────
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./patients.db")

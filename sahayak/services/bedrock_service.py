@@ -139,14 +139,14 @@ def _invoke_groq(api_key: str, system_prompt: str, user_prompt: str, max_tokens:
     import httpx
     client = Groq(api_key=api_key, http_client=httpx.Client(timeout=30.0))
 
-    # Try models in order — first available wins
+    # Try models in order — fastest first
     models_to_try = [
-        GROQ_LLM_MODEL,
-        "meta-llama/llama-4-scout-17b-16e-instruct",
-        "llama-3.3-70b-versatile",
-        "llama3-70b-8192",
-        "llama-3.1-8b-instant",
-        "mixtral-8x7b-32768",
+        "llama-3.1-8b-instant",                         # fastest (~0.5s), always available
+        "llama-3.3-70b-versatile",                       # smarter, still fast on Groq
+        "llama3-70b-8192",                               # older but stable
+        "meta-llama/llama-4-scout-17b-16e-instruct",    # latest if available
+        GROQ_LLM_MODEL,                                  # env override
+        "mixtral-8x7b-32768",                            # classic fallback
     ]
     # Deduplicate while preserving order
     seen, ordered = set(), []
