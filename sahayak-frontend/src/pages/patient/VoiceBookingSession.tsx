@@ -152,15 +152,16 @@ function speakText(text: string, lang: string, onEnd?: () => void) {
   const finish = () => {
     if (done) return
     done = true
-    onEnd?.()
+    // Extra 800ms silence after TTS ends before handing back control
+    // This prevents the mic from picking up speaker echo
+    setTimeout(() => onEnd?.(), 800)
   }
 
-  u.onend   = finish
-  u.onerror = finish  // also trigger callback on error (e.g. no voice available)
+  u.onerror = finish
 
   // Chrome bug: onend sometimes never fires — fallback after estimated duration
   const wordCount = text.split(/\s+/).length
-  const timeoutMs = Math.max(4000, wordCount * 350 + 1500)
+  const timeoutMs = Math.max(4000, wordCount * 380 + 2000)
   const timer = setTimeout(finish, timeoutMs)
   u.onend = () => { clearTimeout(timer); finish() }
 
@@ -289,16 +290,19 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
   const startRec = useCallback(() => {
     const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition
     if (!SR) return  // silently fall back to text input
-    try {
-      recRef.current?.stop()
-    } catch { /* ignore */ }
+
+    // Stop any ongoing speech synthesis FIRST — prevents echo
+    window.speechSynthesis.cancel()
+
+    try { recRef.current?.stop() } catch { /* ignore */ }
 
     const rec: SpeechRecognition = new SR()
     rec.lang           = langRef.current   // always current language via ref
     rec.continuous     = false
     rec.interimResults = true
+    rec.maxAlternatives = 1
 
-    rec.onstart  = () => setListening(true)
+    rec.onstart  = () => { setListening(true); setSpeaking(false) }
     rec.onresult = (e: SpeechRecognitionEvent) => {
       let fin = "", itr = ""
       for (const r of Array.from(e.results)) {
@@ -315,12 +319,17 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
       })
     }
     rec.onerror = (e) => {
-      // "aborted" is normal when we call stop() manually — ignore it
-      if ((e as any).error !== "aborted") setListening(false)
+      const err = (e as any).error
+      if (err === "aborted" || err === "no-speech") {
+        setListening(false)
+        setInterim("")
+        return
+      }
+      setListening(false)
       setInterim("")
     }
     recRef.current = rec
-    rec.start()
+    try { rec.start() } catch { /* browser may reject if already running */ }
   }, []) // langRef & submitAnswer accessed via refs/closure — no stale deps
 
   /* ── Stop recognition ── */
@@ -416,18 +425,21 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
   /* ── Drive conversation: re-runs when step changes OR language changes ── */
   useEffect(() => {
     if (!["name","age","phone","time"].includes(step)) return
-    // Stop any ongoing recognition before re-speaking
+    // Stop any ongoing recognition before speaking
     try { recRef.current?.stop() } catch { /* ignore */ }
+    setListening(false)
     const p = PROMPTS[langRef.current]
+    // AI speaks the prompt — user must manually tap the mic button to respond
+    // (auto-starting mic causes echo as the mic picks up the speaker output)
     if (step === "name") {
-      aiSay(p.greeting(docName, reasonLabel), startRec)
+      aiSay(p.greeting(docName, reasonLabel))
     } else if (step === "age") {
-      aiSay(p.askAge(ansRef.current.name), startRec)
+      aiSay(p.askAge(ansRef.current.name))
     } else if (step === "phone") {
-      aiSay(p.askPhone, startRec)
+      aiSay(p.askPhone)
     } else if (step === "time") {
       const preview = slotsRef.current.slice(0, 3).map(fmt).join(", ")
-      aiSay(p.askTime(preview), startRec)
+      aiSay(p.askTime(preview))
     }
   // aiSay changes when lang changes → effect re-runs with new language
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -437,15 +449,21 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
   useEffect(() => {
     async function init() {
       try {
-        // Always fetch from /auth/me to avoid stale Zustand state
-        // (e.g. when same browser was used to test both patient & doctor)
-        const me = await getMe()
-        if (me.role !== "patient" || !me.patient_id) {
-          setErrMsg("Please log in as a patient to book appointments.")
-          setStep("no_doctor")
-          return
+        // Use patient_id from Zustand store first (avoids a /auth/me round-trip
+        // that can fail if the JWT is expired while the session is still loaded)
+        let pid: number | null = (user as any)?.patient_id ?? null
+
+        if (!pid) {
+          // Fall back to /auth/me only when store doesn't have patient_id
+          const me = await getMe()
+          if (me.role !== "patient" || !me.patient_id) {
+            setErrMsg("Please log in as a patient to book appointments.")
+            setStep("no_doctor")
+            return
+          }
+          pid = me.patient_id
         }
-        const pid = me.patient_id
+
         setPid(pid)
         const linked = await getLinkedDoctor(pid)
         if (!linked.doctor_id) {
@@ -673,12 +691,12 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
           speaking    ? "text-blue-400"
           : listening  ? "text-red-400"
           : step === "booking" ? "text-blue-400"
-                       : "text-gray-500"
+                       : "text-amber-400"
         )}>
-          {speaking ? "Speaking…"
-          : listening ? "Listening… tap mic when done"
+          {speaking    ? "AI is speaking… wait, then tap 🎤"
+          : listening  ? "🎤 Listening… speak now, then wait"
           : step === "booking" ? "Booking your appointment…"
-          : "Tap the mic to speak your answer"}
+          : "👆 Tap the mic button below to speak"}
         </p>
       </div>
 
@@ -743,33 +761,38 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
       </div>
 
       {/* ── Input row ── */}
-      <div className="px-4 pb-4 pt-2.5 border-t border-white/[0.06]">
+      <div className="px-4 pb-5 pt-3 border-t border-white/[0.06] space-y-3">
+
+        {/* Big mic button — primary action */}
+        {!inputLocked && (
+          <button onClick={handleMic}
+            className={cn(
+              "w-full flex items-center justify-center gap-3 py-3.5 rounded-xl font-semibold text-sm transition-all active:scale-95",
+              listening
+                ? "bg-red-500/20 border-2 border-red-500/60 text-red-300 shadow-lg shadow-red-500/15"
+                : "bg-blue-600/90 hover:bg-blue-600 text-white shadow-lg shadow-blue-500/20"
+            )}>
+            {listening
+              ? <><MicOff className="w-5 h-5" /> Stop — submit answer</>
+              : <><Mic className="w-5 h-5" /> Tap to speak your answer</>
+            }
+          </button>
+        )}
+
+        {/* Text fallback */}
         <div className="flex gap-2">
           <input
             value={textInput}
             onChange={e => setTextInput(e.target.value)}
             onKeyDown={e => e.key === "Enter" && handleSend()}
             placeholder={
-              inputLocked ? ""
-              : step === "phone" ? "Type number or speak…"
-              : "Type or speak your answer…"
+              inputLocked ? "Please wait…"
+              : step === "phone" ? "Or type your number here…"
+              : "Or type your answer here…"
             }
             disabled={inputLocked}
             className="flex-1 bg-[#161b27] border border-[#1e2d4a] text-white placeholder:text-gray-600 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-blue-500/40 disabled:opacity-40 transition-colors"
           />
-
-          {/* Mic */}
-          <button onClick={handleMic} disabled={step === "booking"}
-            className={cn(
-              "w-11 h-11 rounded-xl flex items-center justify-center shrink-0 transition-all disabled:opacity-40 active:scale-95",
-              listening
-                ? "bg-red-500/25 border border-red-500/50 text-red-400 shadow-lg shadow-red-500/10"
-                : "bg-blue-500/20 border border-blue-500/30 text-blue-400 hover:bg-blue-500/30"
-            )}>
-            {listening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-          </button>
-
-          {/* Send (visible when text typed) */}
           {textInput.trim() && (
             <button onClick={handleSend} disabled={inputLocked}
               className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition-all disabled:opacity-40 active:scale-95">
@@ -778,7 +801,7 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
           )}
         </div>
 
-        <p className="text-center text-[10px] text-gray-600 mt-2">
+        <p className="text-center text-[10px] text-gray-600">
           Speak in <span className="text-gray-500">English</span>, <span className="text-gray-500">Hindi</span> or <span className="text-gray-500">Kannada</span> · Select language above
         </p>
       </div>
