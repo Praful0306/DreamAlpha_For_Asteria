@@ -13,7 +13,7 @@ const STEPS = [
   { id: "listen",     icon: Mic,          label: "Listen",        desc: "Recording voice" },
   { id: "transcribe", icon: FileText,      label: "Transcribe",    desc: "Converting speech" },
   { id: "rag",        icon: Database,      label: "RAG Search",    desc: "ICMR guidelines" },
-  { id: "analyze",    icon: Brain,         label: "AI Analysis",   desc: "LLaMA 3.1 70B" },
+  { id: "analyze",    icon: Brain,         label: "AI Analysis",   desc: "Groq AI" },
   { id: "clinical",   icon: ShieldCheck,   label: "Clinical Check", desc: "ICMR protocols" },
   { id: "result",     icon: CheckCircle2,  label: "Result",        desc: "Diagnosis ready" },
 ] as const

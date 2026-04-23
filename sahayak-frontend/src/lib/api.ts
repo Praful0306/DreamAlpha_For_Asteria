@@ -172,7 +172,18 @@ export const diagnose = (payload: {
   vitals?: string
   additional_context?: string
   lang?: string
-}) => post<DiagnosisResult>("/diagnose/", payload)
+}): Promise<DiagnosisResult> => {
+  // 25-second hard timeout — Groq should respond in <3s; this guards against hangs
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 25_000)
+  return post<DiagnosisResult>("/diagnose/", payload, controller.signal)
+    .then(r => { clearTimeout(timer); return r })
+    .catch(err => {
+      clearTimeout(timer)
+      if (err?.name === "AbortError") throw new Error("Diagnosis timed out — please try again")
+      throw err
+    })
+}
 
 export interface ExtractionResponse {
   success: boolean

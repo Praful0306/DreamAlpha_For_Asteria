@@ -3,16 +3,69 @@ Sahayak AI — LLM Logic and RAG Service logic.
 This version restricts LLM to extraction and uses CLINICAL_ENGINE
 for all medical reasoning and correctness.
 FAISS RAG context is injected into the LLM prompt for ICMR grounding.
+
+LLM call order: Groq key-1 → Groq key-2 → call_llm fallback chain
+Target latency: <2 seconds via Groq llama-3.1-8b-instant
 """
+import asyncio
 import logging
 import json
+import os
 import re
 from typing import Optional
 
-from services.bedrock_service import call_llm
 # rag_service imported lazily to avoid sentence_transformers loading at startup
 
 logger = logging.getLogger("sahayak.llm")
+
+# ── Direct Groq call (fastest path — bypasses the full fallback chain) ────────
+
+def _groq_sync(api_key: str, system_prompt: str, user_prompt: str) -> str:
+    """Sync Groq call — run via asyncio.to_thread."""
+    from groq import Groq
+    client = Groq(api_key=api_key)
+    resp = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_prompt},
+        ],
+        temperature=0.0,
+        max_tokens=400,
+    )
+    return resp.choices[0].message.content
+
+
+async def _call_groq_fast(system_prompt: str, user_prompt: str) -> str:
+    """
+    Direct async Groq call with 12-second hard timeout.
+    Tries GROQ_API_KEY_1 first, then GROQ_API_KEY_2.
+    Falls back to the full call_llm chain if both keys fail or time out.
+    """
+    keys = [k for k in [
+        os.getenv("GROQ_API_KEY_1", ""),
+        os.getenv("GROQ_API_KEY_2", ""),
+    ] if k and not k.startswith("your_")]
+
+    for key in keys:
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(_groq_sync, key, system_prompt, user_prompt),
+                timeout=12.0,
+            )
+            if result and result.strip():
+                logger.info("Groq fast call succeeded")
+                return result
+        except asyncio.TimeoutError:
+            logger.warning("Groq key timed out after 12s — trying next key")
+        except Exception as e:
+            logger.warning("Groq key failed: %s", e)
+
+    # All Groq keys failed — fall back to the full chain (AWS / Ollama)
+    logger.warning("All Groq fast keys failed — falling back to call_llm chain")
+    from services.bedrock_service import call_llm
+    return await asyncio.to_thread(call_llm, system_prompt, user_prompt, "llama", 400)
+
 
 # ── PROMPTS ──────────────────────────────────────────────────────────────────
 
@@ -95,11 +148,8 @@ async def generate_diagnosis(
 
     llm_raw = ""
     try:
-        import asyncio
-        # Run sync call_llm in a thread so it doesn't block the async event loop
-        llm_raw = await asyncio.to_thread(
-            call_llm, system_prompt, user_prompt, "llama", 400
-        )
+        # Fast Groq call — target <2s.  Falls back to call_llm chain if needed.
+        llm_raw = await _call_groq_fast(system_prompt, user_prompt)
     except Exception as e:
         logger.error("All LLM backends failed: %s", e)
         # Fallback to a basic template if all LLMs are down
