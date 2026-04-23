@@ -26,50 +26,18 @@ import VoiceBookingSession from "./VoiceBookingSession"
    Example: VITE_OMNIDIM_WIDGET_SRC=https://app.omnidim.io/widget/loader.js?key=abc123
 ─────────────────────────────────────────────────────────────────────────────── */
 function useOmnidimWidget() {
+  // Just loads the small floating corner widget — buttons use VoiceBookingSession instead
   useEffect(() => {
     const widgetSrc = import.meta.env.VITE_OMNIDIM_WIDGET_SRC as string | undefined
     if (!widgetSrc) return
-
-    const existing = document.getElementById("omnidim-widget-script")
-    if (existing) return   // already loaded
-
+    if (document.getElementById("omnidim-widget-script")) return
     const script = document.createElement("script")
-    script.id    = "omnidim-widget-script"
-    script.src   = widgetSrc
+    script.id  = "omnidim-widget-script"
+    script.src = widgetSrc
     script.setAttribute("data-agent-id", "149053")
     script.async = true
     document.body.appendChild(script)
-
-    return () => {
-      try { document.body.removeChild(script) } catch { /* already removed */ }
-    }
-  }, [])
-
-  // Returns a function that opens the Omnidim widget programmatically
-  return useCallback(() => {
-    const w = window as any
-    // Try official Omnidim JS API
-    if (typeof w.OmnidimWidget?.open === "function") { w.OmnidimWidget.open(); return }
-    if (typeof w.omnidim?.open === "function")        { w.omnidim.open();        return }
-    // Try clicking the floating launcher button by common selectors
-    const selectors = [
-      "#omnidim-widget-button", "#omnidim-launcher", ".omnidim-launcher",
-      "[data-omnidim-launcher]", "[id*='omnidim'][id*='button']",
-      "[id*='omnidim'][id*='launch']", "[class*='omnidim-launch']",
-    ]
-    for (const sel of selectors) {
-      const el = document.querySelector(sel) as HTMLElement | null
-      if (el) { el.click(); return }
-    }
-    // Fallback: find any element injected by omnidim script (fixed-position button)
-    const all = document.querySelectorAll("button, div[role='button']")
-    for (const el of Array.from(all)) {
-      const id = (el as HTMLElement).id ?? ""
-      const cls = (el as HTMLElement).className ?? ""
-      if (id.includes("omnidim") || cls.includes("omnidim")) {
-        (el as HTMLElement).click(); return
-      }
-    }
+    return () => { try { document.body.removeChild(script) } catch { /**/ } }
   }, [])
 }
 
@@ -143,12 +111,12 @@ export default function PatientDashboard() {
   const [ashaContact,  setAshaContact]  = useState<AshaContact | null>(null)
   const [loading,      setLoading]      = useState(true)
 
-  // Load Omnidim floating widget (tiny corner button — still available)
+  // Load small floating Omnidim corner widget
   useOmnidimWidget()
 
-  // In-app voice booking modal state
+  // Voice booking modal — opened by all Doctor-call buttons on this page
   const [showVoiceModal, setShowVoiceModal] = useState(false)
-  const openBookingWidget = useCallback(() => setShowVoiceModal(true), [])
+  const openVoiceBooking = useCallback(() => setShowVoiceModal(true), [])
 
   const fetchAll = useCallback(() => {
     if (!user) { setLoading(false); return }
@@ -247,12 +215,12 @@ export default function PatientDashboard() {
   ]
 
   const actions: { label: string; sub: string; icon: React.ElementType; href?: string; action?: () => void; grad: string }[] = [
-    { label: "AI Diagnosis",  sub: "Describe symptoms", icon: Mic,      href: "/patient/diagnose",   grad: "from-orange-600 to-orange-500" },
-    { label: "Upload Report", sub: "PDF / image scan",  icon: Upload,   href: "/patient/upload",     grad: "from-blue-600 to-blue-500" },
-    { label: "View Reports",  sub: "All your records",  icon: FileText, href: "/patient/reports",    grad: "from-purple-600 to-purple-500" },
-    { label: "Share Access",  sub: "With your doctor",  icon: Share2,   href: "/patient/access",     grad: "from-emerald-600 to-emerald-500" },
-    { label: "Call Doctor",   sub: "Book appointment",  icon: Phone,    action: openBookingWidget,   grad: "from-sky-600 to-blue-500" },
-    { label: "Call ASHA",     sub: "Health guidance",   icon: Heart,    href: "/patient/call",       grad: "from-pink-600 to-rose-500" },
+    { label: "AI Diagnosis",  sub: "Describe symptoms", icon: Mic,      href: "/patient/diagnose",  grad: "from-orange-600 to-orange-500" },
+    { label: "Upload Report", sub: "PDF / image scan",  icon: Upload,   href: "/patient/upload",    grad: "from-blue-600 to-blue-500" },
+    { label: "View Reports",  sub: "All your records",  icon: FileText, href: "/patient/reports",   grad: "from-purple-600 to-purple-500" },
+    { label: "Share Access",  sub: "With your doctor",  icon: Share2,   href: "/patient/access",    grad: "from-emerald-600 to-emerald-500" },
+    { label: "Call Doctor",   sub: "Book appointment",  icon: Phone,    action: openVoiceBooking,   grad: "from-sky-600 to-blue-500" },
+    { label: "Call ASHA",     sub: "Health guidance",   icon: Heart,    href: "/patient/call",      grad: "from-pink-600 to-rose-500" },
   ]
 
   return (
@@ -445,21 +413,19 @@ export default function PatientDashboard() {
             ))}
           </div>
 
-          {/* CTA row */}
+          {/* CTA row — both buttons open the in-app voice booking session */}
           <div className="flex flex-col sm:flex-row gap-2.5">
-            {/* Phone call button */}
-            <a
-              href="tel:+912271263971"
+            <button
+              onClick={openVoiceBooking}
               className="flex-1 flex items-center justify-center gap-2.5 py-3 rounded-xl font-semibold text-white text-sm transition-all active:scale-95 hover:brightness-110"
               style={{ background: "linear-gradient(135deg, #0284c7cc, #0284c788)", boxShadow: "0 4px 20px #0284c733" }}
             >
               <PhoneCall className="w-4 h-4" />
-              Call +91 22 7126 3971
-            </a>
+              Book Appointment (Voice)
+            </button>
 
-            {/* In-app voice booking — opens Omnidim widget */}
             <button
-              onClick={openBookingWidget}
+              onClick={openVoiceBooking}
               className="flex-1 flex items-center justify-center gap-2.5 py-3 rounded-xl font-semibold text-white text-sm border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] transition-all active:scale-95"
             >
               <Mic className="w-4 h-4 text-brand-400" />
@@ -529,15 +495,15 @@ export default function PatientDashboard() {
             ))}
           </div>
 
-          {/* CTA */}
-          <a
-            href={`tel:${ashaContact?.omnidim_phone ?? "+912271263971"}`}
+          {/* CTA — navigate to Call Centre where ASHA call flow is fully working */}
+          <button
+            onClick={() => navigate("/patient/call")}
             className="flex items-center justify-center gap-2.5 py-3 rounded-xl font-semibold text-white text-sm transition-all active:scale-95 hover:brightness-110 w-full"
             style={{ background: "linear-gradient(135deg, #16a34acc, #15803d88)", boxShadow: "0 4px 20px #16a34a22" }}
           >
             <Phone className="w-4 h-4" />
-            Call ASHA Health Line · {ashaContact?.omnidim_phone ?? "+91 22 7126 3971"}
-          </a>
+            Call ASHA Health Line
+          </button>
 
           <p className="text-[10px] text-gray-600 text-center mt-3">
             Our AI health assistant will check on you and update your ASHA worker
@@ -559,7 +525,7 @@ export default function PatientDashboard() {
                 <p className="text-xs text-gray-500">{appts.length} scheduled</p>
               </div>
             </div>
-            <button onClick={() => navigate("/patient/call")}
+            <button onClick={openVoiceBooking}
               className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1 transition-colors">
               Book more <ChevronRight className="w-3 h-3" />
             </button>
