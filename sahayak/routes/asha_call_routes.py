@@ -243,6 +243,10 @@ async def asha_health_call_webhook(request: Request, tool: str = ""):
 
     try:
         result = await handler(args, call)
+        # transfer_to_asha returns a dict with top-level transfer fields;
+        # all other handlers return a plain string → wrap in {"result": ...}
+        if isinstance(result, dict):
+            return _cors_response(result)
         return _cors_response({"result": result})
     except Exception as exc:
         logger.error("ASHA health call tool %s failed: %s", name, exc, exc_info=True)
@@ -463,20 +467,26 @@ async def _get_patient_for_asha(args: dict, call: dict) -> str:
 
 # ── Tool: transfer_to_asha ────────────────────────────────────────────────────
 
-async def _transfer_to_asha(args: dict, call: dict) -> str:
+async def _transfer_to_asha(args: dict, call: dict) -> dict:
     """
     Patient asks to speak to their ASHA worker directly.
-    Returns the ASHA's phone number so Omnidim can transfer the call.
-    Response format understood by Omnidim custom-API transfer.
+    Returns a dict with:
+      - result        : text spoken by agent before transfer
+      - transfer_to   : E.164 phone number — Omnidim reads this for live SIP transfer
+      - phone         : alias (some Omnidim versions use this field)
+      - transfer_number: alias
+    Also logs an URGENT visit request so ASHA sees it in their dashboard.
     """
     phone = (args.get("phone") or args.get("patient_phone") or "").strip()
     p = _get_patient_by_phone(phone) if phone else None
 
     if not p or not p.get("asha_worker_id"):
-        return (
-            "I'm sorry, I couldn't find your ASHA worker's details right now. "
-            "Please ask your ASHA worker to update their contact information in the portal."
-        )
+        return {
+            "result": (
+                "I'm sorry, I couldn't find your ASHA worker's details right now. "
+                "I have logged your request and your ASHA worker will call you back shortly."
+            )
+        }
 
     try:
         with engine.connect() as conn:
@@ -490,19 +500,39 @@ async def _transfer_to_asha(args: dict, call: dict) -> str:
             asha_phone = row[1].strip()
             if not asha_phone.startswith("+"):
                 asha_phone = "+91" + asha_phone.lstrip("0")
+
             logger.info("transfer_to_asha: patient=%s → ASHA=%s phone=%s", phone, asha_name, asha_phone)
-            return (
-                f"Connecting you to {asha_name} now. "
-                f"Please hold while I transfer your call. "
-                f"TRANSFER_PHONE:{asha_phone}"
+
+            # Log urgent visit request so ASHA dashboard shows the transfer attempt
+            _save_call_log(
+                direction="inbound",
+                patient_id=p["id"],
+                patient_phone=phone,
+                asha_id=p["asha_worker_id"],
+                call_type="transfer_request",
+                health_update="Patient requested live transfer to ASHA worker during call",
+                visit_requested=True,
+                urgency="urgent",
             )
+
+            return {
+                # Spoken text before Omnidim does the SIP transfer
+                "result":          f"Please hold, connecting you to {asha_name} now.",
+                # These top-level fields are read by Omnidim for the actual SIP transfer
+                "transfer_to":     asha_phone,
+                "phone":           asha_phone,
+                "transfer_number": asha_phone,
+            }
+
     except Exception as exc:
         logger.error("_transfer_to_asha: %s", exc)
 
-    return (
-        "I'm sorry, I couldn't reach your ASHA worker's phone right now. "
-        "Please try calling them directly or ask them to call you back."
-    )
+    return {
+        "result": (
+            "I'm sorry, I couldn't reach your ASHA worker's line right now. "
+            "I have logged an urgent request — your ASHA worker will call you back very soon."
+        )
+    }
 
 
 # ── Omnidim custom-API transfer endpoint (called by Omnidim for live transfer) ──
