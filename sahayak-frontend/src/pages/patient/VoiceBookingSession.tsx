@@ -17,6 +17,11 @@ import { useStore } from "@/store/useStore"
 import { getMe, getLinkedDoctor, getNextSlots } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
+import { isDemoMode, demoAppointments } from "@/lib/demoStore"
+
+/* ── Demo-mode fake slots ────────────────────────────────────────────────── */
+const DEMO_SLOTS = ["09:00","09:30","10:00","10:30","11:00","11:30","14:00","14:30","15:00","15:30"]
+function demoSlotDate() { return new Date().toISOString().slice(0,10) }
 
 /* ── Types ─────────────────────────────────────────────────────────────────── */
 interface ChatMsg { id: number; role: "ai" | "user"; text: string }
@@ -377,16 +382,48 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
     setListening(false)
   }, [])
 
-  /* ── Book appointment via backend ── */
+  /* ── Book appointment (demo mode OR real backend) ── */
   const bookAppt = useCallback(async (slot: string) => {
     setStep("booking")
+    const ans     = ansRef.current
+    const curLang = langRef.current
+
+    if (isDemoMode()) {
+      // Save to shared demoStore so Doctor Appointments can see it
+      const tok = makeToken()
+      demoAppointments.add({
+        patient_name:   ans.name  || (user as any)?.full_name || "Patient",
+        reason:         reasonLabel,
+        preferred_time: `${slotDate} ${slot}`,
+        phone:          ans.phone || (user as any)?.phone || "",
+        status:         "pending",
+        booked_by:      "patient",
+      })
+      const r: BookingResult = {
+        token:      tok,
+        name:       ans.name  || (user as any)?.full_name || "Patient",
+        age:        ans.age,
+        phone:      ans.phone || (user as any)?.phone || "",
+        date:       slotDate,
+        slot,
+        reason:     reasonLabel,
+        doctorName: docName || "Dr. Sharma (Demo)",
+        apptId:     undefined,
+      }
+      setResult(r)
+      setStep("done")
+      const successMsg = PROMPTS[curLang].success(fmt(slot), tok)
+      addMsg("ai", `🎉 ${successMsg}`)
+      speakText(successMsg, curLang)
+      toast.success("Appointment booked! Visible on Doctor Dashboard.")
+      return
+    }
+
     const BASE  = (import.meta.env.VITE_API_URL as string) ?? ""
     const token = localStorage.getItem("sahayak_token")
     const hdr: Record<string, string> = { "Content-Type": "application/json" }
     if (token) hdr["Authorization"] = `Bearer ${token}`
 
-    const ans = ansRef.current
-    const curLang = langRef.current
     try {
       const res  = await fetch(`${BASE}/appointments/book`, {
         method: "POST", headers: hdr,
@@ -487,13 +524,22 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
   /* ── Init: resolve patient → doctor → slots ── */
   useEffect(() => {
     async function init() {
+      // Demo mode: bypass all API calls, use fake doctor + slots
+      if (isDemoMode()) {
+        setDocId(1)
+        setDocName("Dr. Sharma (Demo)")
+        setPid(1)
+        setSlots(DEMO_SLOTS)
+        slotsRef.current = DEMO_SLOTS
+        setSlotDate(demoSlotDate())
+        setStep("name")
+        return
+      }
+
       try {
-        // Use patient_id from Zustand store first (avoids a /auth/me round-trip
-        // that can fail if the JWT is expired while the session is still loaded)
         let pid: number | null = (user as any)?.patient_id ?? null
 
         if (!pid) {
-          // Fall back to /auth/me only when store doesn't have patient_id
           const me = await getMe()
           if (me.role !== "patient" || !me.patient_id) {
             setErrMsg("Please log in as a patient to book appointments.")
@@ -506,7 +552,7 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
         setPid(pid)
         const linked = await getLinkedDoctor(pid)
         if (!linked.doctor_id) {
-          setErrMsg("")   // standard "no doctor linked" message
+          setErrMsg("")
           setStep("no_doctor")
           return
         }

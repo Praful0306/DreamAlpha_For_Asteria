@@ -15,6 +15,23 @@ import {
 } from "@/lib/api"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
+import { isDemoMode, demoAppointments, type DemoAppointment } from "@/lib/demoStore"
+
+/** Convert a DemoAppointment to AppointmentItem shape for rendering */
+function demoToApptItem(a: DemoAppointment): AppointmentItem {
+  const [date, time] = a.preferred_time.split(" ")
+  const todayStr = new Date().toISOString().slice(0,10)
+  return {
+    id:           parseInt(a.id),
+    patient_name: a.patient_name,
+    date:         date ?? todayStr,
+    time:         time ?? "10:00",
+    status:       a.status === "pending" ? "booked" : a.status,
+    reason:       a.reason,
+    is_today:     (date ?? todayStr) === todayStr,
+    is_manual:    false,
+  } as AppointmentItem
+}
 
 /* ── Date helpers ─────────────────────────────────────────────────────────── */
 function today() { return new Date().toISOString().slice(0, 10) }
@@ -258,6 +275,13 @@ export default function Appointments() {
   const [showAdd,  setShowAdd] = useState(false)
 
   const fetchAppts = useCallback(() => {
+    if (isDemoMode()) {
+      // Load from shared localStorage demo store
+      const demoAppts = demoAppointments.getAll().map(demoToApptItem)
+      setAppts(demoAppts)
+      setLoading(false)
+      return
+    }
     if (!doctorId) { setLoading(false); return }
     setLoading(true)
     getDoctorAppointments(doctorId, 7)

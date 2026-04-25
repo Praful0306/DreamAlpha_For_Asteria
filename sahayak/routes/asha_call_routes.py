@@ -64,7 +64,7 @@ async def asha_health_call_preflight():
 
 def _omnidim_secret()     -> str: return os.getenv("OMNIDIM_SECRET_KEY",  "c4461557c2e29b4c60f62494f09c181c")
 def _omnidim_api_key()    -> str: return os.getenv("OMNIDIM_API_KEY",      "")    # for outbound call API
-def _omnidim_asha_agent() -> str: return os.getenv("OMNIDIM_ASHA_AGENT_ID", "")   # read at request time — never cached
+def _omnidim_asha_agent() -> str: return os.getenv("OMNIDIM_ASHA_AGENT_ID", "149113")  # Sahayak ASHA Health Agent
 def _omnidim_from_phone() -> str: return os.getenv("OMNIDIM_PHONE_NUMBER",  "+912271263971")
 
 
@@ -594,54 +594,68 @@ async def asha_trigger_outbound_call(request: Request):
     This endpoint triggers Omnidim to place an outbound call to the patient's phone.
 
     Body:
-      patient_id   — required (to look up phone)
-      call_type    — "health_check" | "followup" | "emergency" | "reminder"
-      asha_name    — ASHA's display name (spoken by agent)
-      lang         — "en" | "hi" | "kn" (default "en")
-      message      — optional custom first message override
+      patient_id    — DB patient id (optional if patient_phone provided directly)
+      patient_phone — E.164 phone number (pass directly for demo patients not in DB)
+      patient_name  — patient's name (used when patient_phone provided directly)
+      call_type     — "health_check" | "followup" | "emergency" | "reminder"
+      asha_name     — ASHA's display name (spoken by agent)
+      lang          — "en" | "hi" | "kn" (default "en")
+      message       — optional custom first message override
     """
     try:
         body = await request.json()
     except Exception:
         return {"success": False, "error": "Invalid request body"}
 
-    patient_id = body.get("patient_id")
-    call_type  = body.get("call_type", "health_check")
-    asha_name  = (body.get("asha_name") or "your ASHA worker").strip()
-    lang       = body.get("lang", "en")
-    custom_msg = (body.get("message") or "").strip()
+    patient_id    = body.get("patient_id")
+    call_type     = body.get("call_type", "health_check")
+    asha_name     = (body.get("asha_name") or "your ASHA worker").strip()
+    lang          = body.get("lang", "en")
+    custom_msg    = (body.get("message") or "").strip()
 
-    if not patient_id:
-        return {"success": False, "error": "patient_id is required"}
+    # ── Direct phone mode (demo patients / no DB lookup needed) ───────────────
+    direct_phone = (body.get("patient_phone") or "").strip()
+    direct_name  = (body.get("patient_name")  or "Patient").strip()
 
-    # Look up patient phone from DB
-    try:
-        with engine.connect() as conn:
-            row = conn.execute(
-                text("SELECT id, name, phone, asha_worker_id FROM patients WHERE id=:pid"),
-                {"pid": patient_id},
-            ).fetchone()
-    except Exception as exc:
-        logger.error("patient lookup for outbound call: %s", exc)
-        return {"success": False, "error": "Database error looking up patient"}
+    if direct_phone and not patient_id:
+        # Phone supplied directly — normalise and skip DB lookup
+        if not direct_phone.startswith("+"):
+            direct_phone = "+91" + direct_phone.lstrip("0")
+        patient_name  = direct_name
+        patient_phone = direct_phone
+        asha_id       = None
+    else:
+        if not patient_id:
+            return {"success": False, "error": "patient_id or patient_phone is required"}
 
-    if not row:
-        return {"success": False, "error": "Patient not found"}
+        # Look up patient phone from DB
+        try:
+            with engine.connect() as conn:
+                row = conn.execute(
+                    text("SELECT id, name, phone, asha_worker_id FROM patients WHERE id=:pid"),
+                    {"pid": patient_id},
+                ).fetchone()
+        except Exception as exc:
+            logger.error("patient lookup for outbound call: %s", exc)
+            return {"success": False, "error": "Database error looking up patient"}
 
-    patient_name  = row[1]
-    patient_phone = row[2] or ""
-    asha_id       = row[3]
+        if not row:
+            return {"success": False, "error": "Patient not found"}
 
-    if not patient_phone:
-        return {
-            "success": False,
-            "error": f"No phone number for {patient_name}. Ask the patient to update their profile.",
-        }
+        patient_name  = row[1]
+        patient_phone = row[2] or ""
+        asha_id       = row[3]
 
-    # Ensure E.164 format
-    patient_phone = patient_phone.strip()
-    if not patient_phone.startswith("+"):
-        patient_phone = "+91" + patient_phone.lstrip("0")
+        if not patient_phone:
+            return {
+                "success": False,
+                "error": f"No phone number for {patient_name}. Ask the patient to update their profile.",
+            }
+
+        # Ensure E.164 format
+        patient_phone = patient_phone.strip()
+        if not patient_phone.startswith("+"):
+            patient_phone = "+91" + patient_phone.lstrip("0")
 
     agent_id = _omnidim_asha_agent() or body.get("agent_id", "")
     if not agent_id:

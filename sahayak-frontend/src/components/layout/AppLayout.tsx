@@ -14,7 +14,7 @@ export default function AppLayout({ role }: AppLayoutProps) {
   const [mobileOpen, setMobileOpen] = useState(false)
 
   return (
-    <div className="flex h-screen bg-[#0f0f13] overflow-hidden">
+    <div className="flex h-screen bg-[#080810] overflow-hidden">
       {/* Desktop sidebar */}
       <div className="hidden lg:block relative">
         <Sidebar

@@ -131,7 +131,13 @@ export default function Auth() {
       if (!sbData.session) throw new Error("Login failed — no session returned")
       await exchangeToken(sbData.session.access_token, sbData.user?.user_metadata?.full_name ?? "")
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Login failed")
+      const msg = err instanceof Error ? err.message : "Login failed"
+      // Detect unconfirmed email
+      if (msg.toLowerCase().includes("email not confirmed") || msg.toLowerCase().includes("invalid login")) {
+        toast.error("Please confirm your email first — check your inbox for the verification link.", { duration: 6000 })
+      } else {
+        toast.error(msg)
+      }
     } finally {
       setLoading(false)
     }
@@ -145,13 +151,22 @@ export default function Auth() {
       const sbData = await signUpWithEmail(data.email, data.password, data.name)
       if (!sbData.session) {
         // Supabase email confirmation enabled — tell user to check email
-        toast.success("Account created! Check your email to confirm, then log in.")
+        toast.info(
+          "Account created! Check your inbox for a confirmation email and click the link, then come back to sign in.",
+          { duration: 8000 }
+        )
         setMode("login")
         return
       }
       await exchangeToken(sbData.session.access_token, data.name)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Registration failed")
+      const msg = err instanceof Error ? err.message : "Registration failed"
+      if (msg.toLowerCase().includes("already registered") || msg.toLowerCase().includes("already exists")) {
+        toast.error("This email is already registered. Please sign in instead.")
+        setMode("login")
+      } else {
+        toast.error(msg)
+      }
     } finally {
       setLoading(false)
     }

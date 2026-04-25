@@ -25,6 +25,9 @@ import {
 } from "@/lib/api"
 import { useStore } from "@/store/useStore"
 import { useVoice } from "@/hooks/useVoice"
+import { demoGet, demoSet, isDemoMode, demoCallLogs, demoHealthRecords } from "@/lib/demoStore"
+
+const DEMO_PATIENTS_KEY = "asha_patients"
 
 // ── Call patient modal state ───────────────────────────────────────────────────
 type CallType = "health_check" | "followup" | "emergency" | "reminder"
@@ -75,10 +78,17 @@ export default function AshaPatients() {
   const chunksRef = useRef<Blob[]>([])
 
   useEffect(() => {
-    getMyPatients()
-      .then(setPatients)
-      .catch(() => {})
-      .finally(() => setLoading(false))
+    if (isDemoMode()) {
+      // Demo mode: load persisted patients from localStorage
+      const saved = demoGet<Patient[]>(DEMO_PATIENTS_KEY, [])
+      setPatients(saved)
+      setLoading(false)
+    } else {
+      getMyPatients()
+        .then(setPatients)
+        .catch(() => {})
+        .finally(() => setLoading(false))
+    }
   }, [])
 
   // ── Call patient state ────────────────────────────────────────────────────────
@@ -89,24 +99,164 @@ export default function AshaPatients() {
 
   async function handleCallPatient() {
     if (!callModal?.patient) return
+    const patient   = callModal.patient
+    const phone     = (patient as any).phone as string | undefined
+    const ashaName  = user?.name ?? "ASHA Worker"
+
     setCalling(true)
     try {
-      const result = await triggerAshaCall(
-        callModal.patient.id,
-        callType,
-        user?.name ?? "ASHA Worker",
-        "en",
-        callMessage.trim() || undefined,
-      )
-      if (result.success) {
-        toast.success(
-          result.demo_mode
-            ? `Demo: call logged for ${result.patient_name}`
-            : `Calling ${result.patient_name}… the AI agent will check their health.`,
-          { duration: 5000 },
-        )
+      if (isDemoMode()) {
+        // ── Demo mode: trigger call via Make.com webhook ───────────────
+        const FIRST_MSGS: Record<CallType, string> = {
+          health_check: `Hello ${patient.name}! I'm calling on behalf of ${ashaName} to check on your health. How are you feeling today?`,
+          followup:     `Hello ${patient.name}! This is a follow-up call from ${ashaName}. Are you taking your medicines regularly?`,
+          emergency:    `Hello ${patient.name}! This is an urgent call from ${ashaName}. Are you okay? Do you need any help?`,
+          reminder:     `Hello ${patient.name}! ${ashaName} wanted to remind you about your upcoming health check-up. Will you be attending?`,
+        }
+        const firstMsg = callMessage.trim() || FIRST_MSGS[callType]
+
+        // Normalise phone to E.164
+        let toPhone = (phone ?? "").trim()
+        if (toPhone && !toPhone.startsWith("+")) {
+          toPhone = "+91" + toPhone.replace(/^0+/, "")
+        }
+
+        let callTriggered = false
+        let debugInfo     = ""
+
+        if (!toPhone) {
+          debugInfo = "No phone number for this patient"
+          console.warn("[Call] patient has no phone number")
+        }
+
+        // ── 1. Vite proxy → Omnidim dispatch (CORS-free in local dev) ────────
+        // /call-dispatch is proxied by Vite to backend.omnidim.io with auth
+        if (!callTriggered && toPhone) {
+          try {
+            const resp = await fetch("/call-dispatch", {
+              method:  "POST",
+              headers: { "Content-Type": "application/json", "Accept": "application/json" },
+              body: JSON.stringify({
+                agent_id:     149113,
+                to_number:    toPhone,
+                call_context: {
+                  first_message: firstMsg,
+                  patient_name:  patient.name,
+                  patient_phone: toPhone,
+                  asha_name:     ashaName,
+                  call_type:     callType,
+                  lang:          "en",
+                },
+              }),
+            })
+            const data = await resp.json().catch(() => ({}))
+            console.log("[Call] Omnidim proxy response:", resp.status, data)
+            if (resp.ok && data.success) {
+              callTriggered = true
+              debugInfo     = ""
+            } else {
+              debugInfo = data.message || data.error || `proxy ${resp.status}`
+              console.warn("[Call] Omnidim proxy failed:", debugInfo)
+            }
+          } catch (e) {
+            debugInfo = `proxy unavailable (${e instanceof Error ? e.message : e})`
+            console.warn("[Call] Omnidim proxy error:", e)
+          }
+        }
+
+        // ── 2. Deployed backend → Omnidim agent 149113 (fallback) ────────────
+        if (!callTriggered && toPhone) {
+          try {
+            const resp = await fetch("https://dreamalpha-for-amd.onrender.com/asha/call-patient", {
+              method:  "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                patient_phone: toPhone,
+                patient_name:  patient.name,
+                call_type:     callType,
+                asha_name:     ashaName,
+                lang:          "en",
+                message:       callMessage.trim() || undefined,
+              }),
+            })
+            const data = await resp.json().catch(() => ({}))
+            console.log("[Call] backend response:", resp.status, data)
+            if (data.success) {
+              callTriggered = true
+              debugInfo     = data.demo_mode ? " (demo logged)" : ""
+            } else {
+              debugInfo = data.error || `backend ${resp.status}`
+            }
+          } catch (e) {
+            debugInfo = `backend unreachable: ${e instanceof Error ? e.message : e}`
+            console.warn("[Call] backend error:", debugInfo)
+          }
+        }
+
+        // Persist call log (shown in ASHA Dashboard → Health Call Activity)
+        demoCallLogs.add({
+          direction:       "outbound",
+          call_type:       callType,
+          patient_phone:   toPhone || phone || "",
+          patient_name:    patient.name,
+          health_update:   callMessage.trim() || `${ashaName} initiated ${callType} call`,
+          symptoms:        null,
+          visit_requested: false,
+          urgency:         callType === "emergency" ? "urgent" : "normal",
+          status:          "initiated",
+          asha_name:       ashaName,
+        })
+
+        // Persist health record (shown in Patient + Doctor dashboards)
+        const TYPE_LABELS: Record<CallType, string> = {
+          health_check: "Health Check Call",
+          followup:     "Follow-up Call",
+          emergency:    "Emergency Call",
+          reminder:     "Reminder Call",
+        }
+        demoHealthRecords.add({
+          patient_name:  patient.name,
+          patient_phone: toPhone || phone || "",
+          record_type:   "call",
+          title:         TYPE_LABELS[callType],
+          summary:       callMessage.trim()
+            || `ASHA ${ashaName} initiated a ${callType} call. AI agent will conduct health check.`,
+          risk_level:    callType === "emergency" ? "HIGH" : "LOW",
+          source:        "asha_call",
+        })
+
+        if (callTriggered) {
+          toast.success(
+            `📞 Calling ${patient.name} at ${toPhone}${debugInfo}… Sahayak ASHA Health Agent is connecting.`,
+            { duration: 6000 },
+          )
+        } else if (!toPhone) {
+          toast.warning(
+            `⚠️ ${patient.name} has no phone number on record. Add a phone number to place calls. Call intent logged.`,
+            { duration: 8000 },
+          )
+        } else {
+          toast.error(
+            `Call dispatch failed: ${debugInfo || "all methods failed"}. Call activity logged in dashboard.`,
+            { duration: 8000 },
+          )
+        }
       } else {
-        toast.error(result.error ?? "Could not place call")
+        // ── Real backend ───────────────────────────────────────────────
+        const result = await triggerAshaCall(
+          patient.id, callType, ashaName, "en",
+          callMessage.trim() || undefined,
+        )
+        if (result.success) {
+          toast.success(
+            result.demo_mode
+              ? `Demo: call logged for ${result.patient_name}`
+              : `Calling ${result.patient_name}… the AI agent will check their health.`,
+            { duration: 5000 },
+          )
+        } else {
+          toast.error(result.error ?? "Could not place call")
+        }
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Call failed")
@@ -282,6 +432,33 @@ export default function AshaPatients() {
     if (!form.name || !form.age) { toast.error("Name and age are required"); return }
     if (!form.phone) { toast.error("Phone number is required"); return }
     setSaving(true)
+
+    if (isDemoMode()) {
+      // Demo mode: create patient locally and persist to localStorage
+      const demoPatient: Patient = {
+        id: Date.now(),
+        name: form.name,
+        age: parseInt(form.age),
+        gender: form.gender,
+        phone: form.phone,
+        village: form.village,
+        district: form.district,
+        blood_group: form.blood_group,
+        medical_history: form.medical_history,
+        is_pregnant: form.is_pregnant,
+        risk_level: "LOW",
+        created_at: new Date().toISOString(),
+      } as Patient
+      const updated = [demoPatient, ...patients]
+      setPatients(updated)
+      demoSet(DEMO_PATIENTS_KEY, updated)
+      setOpen(false)
+      resetDialog()
+      setSaving(false)
+      toast.success(`${demoPatient.name} registered! (saved locally)`)
+      return
+    }
+
     try {
       const p = await registerPatient({
         ...form,
