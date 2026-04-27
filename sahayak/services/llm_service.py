@@ -120,10 +120,7 @@ async def _call_groq_fast(system_prompt: str, user_prompt: str) -> str:
         except Exception as e:
             logger.warning("Groq key failed: %s", e)
 
-    # All Groq keys failed — fall back to the full chain (AWS / Ollama)
-    logger.warning("All Groq fast keys failed — falling back to call_llm chain")
-    from services.bedrock_service import call_llm
-    return await asyncio.to_thread(call_llm, system_prompt, user_prompt, "llama", 400)
+    raise RuntimeError("All Groq diagnosis keys exhausted")
 
 
 # ── PROMPTS ──────────────────────────────────────────────────────────────────
