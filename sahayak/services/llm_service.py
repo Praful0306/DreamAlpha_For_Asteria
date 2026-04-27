@@ -4,8 +4,8 @@ This version restricts LLM to extraction and uses CLINICAL_ENGINE
 for all medical reasoning and correctness.
 FAISS RAG context is injected into the LLM prompt for ICMR grounding.
 
-LLM call order: Groq key-1 → Groq key-2 → call_llm fallback chain
-Target latency: <2 seconds via Groq llama-3.1-8b-instant
+LLM call order: Ollama (local gemma4:e2b) → Groq key-1 → Groq key-2 → call_llm fallback chain
+Target latency: <5 seconds via local Ollama; Groq as cloud fallback
 """
 import asyncio
 import logging
@@ -18,7 +18,66 @@ from typing import Optional
 
 logger = logging.getLogger("sahayak.llm")
 
-# ── Direct Groq call (fastest path — bypasses the full fallback chain) ────────
+# ── Ollama local call (primary — no API key needed) ──────────────────────────
+
+def _ollama_sync_fast(system_prompt: str, user_prompt: str) -> str:
+    """
+    Sync Ollama call — uses gemma4:e2b (thinking model) locally.
+    num_predict=1200 lets the model finish its thinking phase AND produce content.
+    """
+    import urllib.request, json as _json, re as _re
+    from config import OLLAMA_BASE_URL, OLLAMA_MODEL
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_prompt},
+        ],
+        "stream": False,
+        "options": {"temperature": 0.0, "num_predict": 1200},
+    }
+    data = _json.dumps(payload).encode("utf-8")
+    req  = urllib.request.Request(
+        f"{OLLAMA_BASE_URL}/api/chat",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=35) as resp:
+        result = _json.loads(resp.read())
+    msg     = result.get("message", {})
+    content = msg.get("content", "").strip()
+    # thinking model: content has the final answer; fall back to extracting JSON from thinking
+    if content:
+        return content
+    thinking = msg.get("thinking", "").strip()
+    if thinking:
+        # extract the last JSON block from the chain-of-thought
+        matches = _re.findall(r"\{[\s\S]*?\}", thinking)
+        if matches:
+            return matches[-1]
+        return thinking
+    raise ValueError(f"Ollama ({OLLAMA_MODEL}) returned empty response")
+
+
+async def _call_ollama_fast(system_prompt: str, user_prompt: str) -> str:
+    """Async Ollama call — primary LLM, offline-capable, no rate limits."""
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(_ollama_sync_fast, system_prompt, user_prompt),
+            timeout=38.0,
+        )
+        if result and result.strip():
+            logger.info("Ollama (gemma4:e2b) diagnosis succeeded")
+            return result
+    except asyncio.TimeoutError:
+        logger.warning("Ollama timed out — falling back to Groq")
+    except Exception as e:
+        logger.warning("Ollama unavailable: %s — falling back to Groq", e)
+    raise RuntimeError("Ollama unavailable")
+
+
+# ── Groq call (secondary fallback) ───────────────────────────────────────────
 
 def _groq_sync(api_key: str, system_prompt: str, user_prompt: str) -> str:
     """Sync Groq call — run via asyncio.to_thread."""
@@ -148,15 +207,18 @@ async def generate_diagnosis(
 
     llm_raw = ""
     try:
-        # Fast Groq call — target <2s.  Falls back to call_llm chain if needed.
-        llm_raw = await _call_groq_fast(system_prompt, user_prompt)
-    except Exception as e:
-        logger.error("All LLM backends failed: %s", e)
-        # Fallback to a basic template if all LLMs are down
-        llm_raw = (
-            '{"extracted_symptoms": "' + symptoms.replace('"', "'") + '",'
-            '"disease_name": "Clinical Evaluation Required", "confidence_pct": 50}'
-        )
+        # Primary: Ollama local (gemma4:e2b) — offline-capable, no API limits
+        llm_raw = await _call_ollama_fast(system_prompt, user_prompt)
+    except Exception:
+        try:
+            # Secondary: Groq cloud — fast fallback when Ollama is unavailable
+            llm_raw = await _call_groq_fast(system_prompt, user_prompt)
+        except Exception as e:
+            logger.error("All LLM backends failed: %s", e)
+            llm_raw = (
+                '{"extracted_symptoms": "' + symptoms.replace('"', "'") + '",'
+                '"disease_name": "Clinical Evaluation Required", "confidence_pct": 50}'
+            )
 
     # Parse LLM JSON
     llm_data = _parse_json(llm_raw)

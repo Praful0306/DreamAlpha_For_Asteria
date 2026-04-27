@@ -76,7 +76,7 @@ TWILIO_PHONE_NUMBER  = os.getenv("TWILIO_PHONE_NUMBER", "")
 
 # ── Ollama — Local Offline LLM Fallback ───────────────────────────────────────
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL    = os.getenv("OLLAMA_MODEL", "gemma2:2b")
+OLLAMA_MODEL    = os.getenv("OLLAMA_MODEL", "gemma4:e2b")
 
 # ── App ───────────────────────────────────────────────────────────────────────
 APP_VERSION = "3.3.0"
