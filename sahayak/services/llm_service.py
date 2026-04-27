@@ -102,8 +102,8 @@ async def _call_groq_fast(system_prompt: str, user_prompt: str) -> str:
     Falls back to the full call_llm chain if both keys fail or time out.
     """
     keys = [k for k in [
-        os.getenv("GROQ_API_KEY_1", ""),
-        os.getenv("GROQ_API_KEY_2", ""),
+        os.getenv("GROQ_DIAGNOSE_KEY_1", "") or os.getenv("GROQ_API_KEY_1", ""),
+        os.getenv("GROQ_DIAGNOSE_KEY_2", "") or os.getenv("GROQ_API_KEY_2", ""),
     ] if k and not k.startswith("your_")]
 
     for key in keys:
