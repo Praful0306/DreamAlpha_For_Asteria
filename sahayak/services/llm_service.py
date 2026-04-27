@@ -4,8 +4,10 @@ This version restricts LLM to extraction and uses CLINICAL_ENGINE
 for all medical reasoning and correctness.
 FAISS RAG context is injected into the LLM prompt for ICMR grounding.
 
-LLM call order: Ollama (local gemma4:e2b) → Groq key-1 → Groq key-2 → call_llm fallback chain
-Target latency: <5 seconds via local Ollama; Groq as cloud fallback
+LLM call order: Groq key-1 → Groq key-2 → Ollama (local) → hardcoded fallback
+Groq is primary because it works on all environments (Render, cloud, local with internet).
+Ollama is secondary — only available when running locally with the model installed.
+Target latency: <5 seconds via Groq; Ollama as offline-only fallback.
 """
 import asyncio
 import logging
@@ -77,50 +79,66 @@ async def _call_ollama_fast(system_prompt: str, user_prompt: str) -> str:
     raise RuntimeError("Ollama unavailable")
 
 
-# ── Groq call (secondary fallback) ───────────────────────────────────────────
+# ── Groq call (primary — works on Render and all cloud environments) ──────────
 
-def _groq_sync(api_key: str, system_prompt: str, user_prompt: str) -> str:
+_GROQ_MODELS = ["llama-3.1-8b-instant", "llama3-8b-8192", "llama-3.3-70b-versatile"]
+
+
+def _groq_sync(api_key: str, system_prompt: str, user_prompt: str, model: str) -> str:
     """Sync Groq call — run via asyncio.to_thread."""
     from groq import Groq
     client = Groq(api_key=api_key)
     resp = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+        model=model,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user",   "content": user_prompt},
         ],
         temperature=0.0,
-        max_tokens=400,
+        max_tokens=600,
     )
     return resp.choices[0].message.content
 
 
+def _collect_groq_keys() -> list[str]:
+    """Return deduplicated list of all configured Groq API keys."""
+    seen: set[str] = set()
+    keys: list[str] = []
+    for name in ("GROQ_DIAGNOSE_KEY_1", "GROQ_DIAGNOSE_KEY_2",
+                 "GROQ_API_KEY_1", "GROQ_API_KEY_2"):
+        k = os.getenv(name, "").strip()
+        if k and not k.startswith("your_") and k not in seen:
+            seen.add(k)
+            keys.append(k)
+    return keys
+
+
 async def _call_groq_fast(system_prompt: str, user_prompt: str) -> str:
     """
-    Direct async Groq call with 12-second hard timeout.
-    Tries GROQ_DIAGNOSE_KEY_1/2 (diagnosis-specific keys) with fallback to GROQ_API_KEY_1/2.
-    Falls back to the full call_llm chain if all keys fail or time out.
+    Async Groq call — PRIMARY LLM on all cloud/Render deployments.
+    Tries all configured keys × all models until one succeeds.
+    15-second hard timeout per attempt.
     """
-    keys = [k for k in [
-        os.getenv("GROQ_DIAGNOSE_KEY_1", "") or os.getenv("GROQ_API_KEY_1", ""),
-        os.getenv("GROQ_DIAGNOSE_KEY_2", "") or os.getenv("GROQ_API_KEY_2", ""),
-    ] if k and not k.startswith("your_")]
+    keys = _collect_groq_keys()
+    if not keys:
+        raise RuntimeError("No Groq API keys configured")
 
     for key in keys:
-        try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(_groq_sync, key, system_prompt, user_prompt),
-                timeout=12.0,
-            )
-            if result and result.strip():
-                logger.info("Groq fast call succeeded")
-                return result
-        except asyncio.TimeoutError:
-            logger.warning("Groq key timed out after 12s — trying next key")
-        except Exception as e:
-            logger.warning("Groq key failed: %s", e)
+        for model in _GROQ_MODELS:
+            try:
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(_groq_sync, key, system_prompt, user_prompt, model),
+                    timeout=15.0,
+                )
+                if result and result.strip():
+                    logger.info("Groq diagnosis succeeded (model=%s)", model)
+                    return result
+            except asyncio.TimeoutError:
+                logger.warning("Groq timed out (model=%s) — trying next", model)
+            except Exception as e:
+                logger.warning("Groq failed (model=%s): %s — trying next", model, e)
 
-    raise RuntimeError("All Groq diagnosis keys exhausted")
+    raise RuntimeError("All Groq diagnosis keys/models exhausted")
 
 
 # ── PROMPTS ──────────────────────────────────────────────────────────────────
@@ -204,12 +222,12 @@ async def generate_diagnosis(
 
     llm_raw = ""
     try:
-        # Primary: Ollama local (gemma4:e2b) — offline-capable, no API limits
-        llm_raw = await _call_ollama_fast(system_prompt, user_prompt)
+        # Primary: Groq cloud — works on Render and all internet-connected environments
+        llm_raw = await _call_groq_fast(system_prompt, user_prompt)
     except Exception:
         try:
-            # Secondary: Groq cloud — fast fallback when Ollama is unavailable
-            llm_raw = await _call_groq_fast(system_prompt, user_prompt)
+            # Secondary: Ollama local — offline-capable, only available when running locally
+            llm_raw = await _call_ollama_fast(system_prompt, user_prompt)
         except Exception as e:
             logger.error("All LLM backends failed: %s", e)
             llm_raw = (
