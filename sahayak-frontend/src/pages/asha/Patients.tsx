@@ -25,7 +25,7 @@ import {
 } from "@/lib/api"
 import { useStore } from "@/store/useStore"
 import { useVoice } from "@/hooks/useVoice"
-import { demoGet, demoSet, isDemoMode, demoCallLogs, demoHealthRecords } from "@/lib/demoStore"
+import { demoGet, demoSet, isDemoMode, demoAddCallWithRecord } from "@/lib/demoStore"
 
 const DEMO_PATIENTS_KEY = "asha_patients"
 
@@ -100,7 +100,7 @@ export default function AshaPatients() {
   async function handleCallPatient() {
     if (!callModal?.patient) return
     const patient   = callModal.patient
-    const phone     = (patient as any).phone as string | undefined
+    const phone     = patient.phone
     const ashaName  = user?.name ?? "ASHA Worker"
 
     setCalling(true)
@@ -193,37 +193,33 @@ export default function AshaPatients() {
           }
         }
 
-        // Persist call log (shown in ASHA Dashboard → Health Call Activity)
-        demoCallLogs.add({
-          direction:       "outbound",
-          call_type:       callType,
-          patient_phone:   toPhone || phone || "",
-          patient_name:    patient.name,
-          health_update:   callMessage.trim() || `${ashaName} initiated ${callType} call`,
-          symptoms:        null,
-          visit_requested: false,
-          urgency:         callType === "emergency" ? "urgent" : "normal",
-          status:          "initiated",
-          asha_name:       ashaName,
-        })
-
-        // Persist health record (shown in Patient + Doctor dashboards)
         const TYPE_LABELS: Record<CallType, string> = {
           health_check: "Health Check Call",
           followup:     "Follow-up Call",
           emergency:    "Emergency Call",
           reminder:     "Reminder Call",
         }
-        demoHealthRecords.add({
-          patient_name:  patient.name,
-          patient_phone: toPhone || phone || "",
-          record_type:   "call",
-          title:         TYPE_LABELS[callType],
-          summary:       callMessage.trim()
-            || `ASHA ${ashaName} initiated a ${callType} call. AI agent will conduct health check.`,
-          risk_level:    callType === "emergency" ? "HIGH" : "LOW",
-          source:        "asha_call",
-        })
+        const patientPhone = toPhone || phone || ""
+        const summary      = callMessage.trim()
+          || `ASHA ${ashaName} initiated a ${callType} call. AI agent will conduct health check.`
+
+        // Single dispatchSync — writes call log + health record atomically
+        demoAddCallWithRecord(
+          {
+            direction: "outbound", call_type: callType,
+            patient_phone: patientPhone, patient_name: patient.name,
+            health_update: callMessage.trim() || `${ashaName} initiated ${callType} call`,
+            symptoms: null, visit_requested: false,
+            urgency: callType === "emergency" ? "urgent" : "normal",
+            status: "initiated", asha_name: ashaName,
+          },
+          {
+            patient_name: patient.name, patient_phone: patientPhone,
+            record_type: "call", title: TYPE_LABELS[callType],
+            summary, risk_level: callType === "emergency" ? "HIGH" : "LOW",
+            source: "asha_call",
+          },
+        )
 
         if (callTriggered) {
           toast.success(
@@ -737,15 +733,12 @@ export default function AshaPatients() {
                   type="button"
                   onClick={voiceStep === "recording" ? stopRecording : startRecording}
                   disabled={voiceStep === "processing"}
-                  className={`relative w-14 h-14 rounded-full flex items-center justify-center transition-all focus:outline-none ${
-                    voiceStep === "recording"
-                      ? "bg-red-500 shadow-lg shadow-red-500/40"
-                      : voiceStep === "processing"
-                      ? "bg-brand-600/50 cursor-not-allowed"
-                      : voiceStep === "done"
-                      ? "bg-green-600 shadow-green-600/30"
-                      : "bg-brand-600 hover:bg-brand-500 shadow-lg shadow-brand-600/30"
-                  }`}
+                  className={`relative w-14 h-14 rounded-full flex items-center justify-center transition-all focus:outline-none ${{
+                    recording:  "bg-red-500 shadow-lg shadow-red-500/40",
+                    processing: "bg-brand-600/50 cursor-not-allowed",
+                    done:       "bg-green-600 shadow-green-600/30",
+                    idle:       "bg-brand-600 hover:bg-brand-500 shadow-lg shadow-brand-600/30",
+                  }[voiceStep]}`}
                 >
                   {voiceStep === "recording" && (
                     <motion.div
@@ -754,15 +747,12 @@ export default function AshaPatients() {
                       transition={{ repeat: Infinity, duration: 1.2 }}
                     />
                   )}
-                  {voiceStep === "processing" ? (
-                    <Loader2 className="w-6 h-6 text-white animate-spin" />
-                  ) : voiceStep === "done" ? (
-                    <CheckCircle2 className="w-6 h-6 text-white" />
-                  ) : voiceStep === "recording" ? (
-                    <MicOff className="w-6 h-6 text-white" />
-                  ) : (
-                    <Mic className="w-6 h-6 text-white" />
-                  )}
+                  {{
+                    processing: <Loader2     className="w-6 h-6 text-white animate-spin" />,
+                    done:       <CheckCircle2 className="w-6 h-6 text-white" />,
+                    recording:  <MicOff      className="w-6 h-6 text-white" />,
+                    idle:       <Mic         className="w-6 h-6 text-white" />,
+                  }[voiceStep]}
                 </button>
 
                 <div className="flex-1">

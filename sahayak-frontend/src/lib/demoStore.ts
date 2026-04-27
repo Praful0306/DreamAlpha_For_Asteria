@@ -127,6 +127,8 @@ export interface DemoCallLog {
   asha_name?:      string
 }
 
+const MAX_ENTRIES = 200
+
 export const demoCallLogs = {
   getAll: (): DemoCallLog[] => demoGet<DemoCallLog[]>("call_logs", []),
   add: (log: Omit<DemoCallLog, "id" | "created_at">): DemoCallLog => {
@@ -135,7 +137,7 @@ export const demoCallLogs = {
       id:         Date.now().toString(),
       created_at: new Date().toISOString(),
     }
-    demoSet("call_logs", [entry, ...demoCallLogs.getAll()])
+    demoSet("call_logs", [entry, ...demoCallLogs.getAll()].slice(0, MAX_ENTRIES))
     dispatchSync()
     return entry
   },
@@ -179,10 +181,24 @@ export const demoHealthRecords = {
       id:         Date.now().toString(),
       created_at: new Date().toISOString(),
     }
-    demoSet("health_records", [entry, ...demoHealthRecords.getAll()])
+    demoSet("health_records", [entry, ...demoHealthRecords.getAll()].slice(0, MAX_ENTRIES))
     dispatchSync()
     return entry
   },
+}
+
+// ── Batch add (single dispatchSync for both stores) ──────────────────────────
+
+export function demoAddCallWithRecord(
+  log: Omit<DemoCallLog, "id" | "created_at">,
+  rec: Omit<DemoHealthRecord, "id" | "created_at">,
+): void {
+  const now = new Date().toISOString()
+  const logEntry: DemoCallLog = { ...log, id: Date.now().toString(), created_at: now }
+  const recEntry: DemoHealthRecord = { ...rec, id: (Date.now() + 1).toString(), created_at: now }
+  demoSet("call_logs",      [logEntry, ...demoCallLogs.getAll()].slice(0, MAX_ENTRIES))
+  demoSet("health_records", [recEntry, ...demoHealthRecords.getAll()].slice(0, MAX_ENTRIES))
+  dispatchSync()
 }
 
 // ── Cross-store sync helpers ───────────────────────────────────────────────────

@@ -98,8 +98,8 @@ def _groq_sync(api_key: str, system_prompt: str, user_prompt: str) -> str:
 async def _call_groq_fast(system_prompt: str, user_prompt: str) -> str:
     """
     Direct async Groq call with 12-second hard timeout.
-    Tries GROQ_API_KEY_1 first, then GROQ_API_KEY_2.
-    Falls back to the full call_llm chain if both keys fail or time out.
+    Tries GROQ_DIAGNOSE_KEY_1/2 (diagnosis-specific keys) with fallback to GROQ_API_KEY_1/2.
+    Falls back to the full call_llm chain if all keys fail or time out.
     """
     keys = [k for k in [
         os.getenv("GROQ_DIAGNOSE_KEY_1", "") or os.getenv("GROQ_API_KEY_1", ""),
