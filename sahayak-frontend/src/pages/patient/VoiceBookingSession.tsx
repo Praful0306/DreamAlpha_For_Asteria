@@ -145,70 +145,75 @@ function spokenToSlot(spoken: string, avail: string[]): string | null {
   })
 }
 
-/* ── TTS helper — robust voice selection + Chrome onend fallback ────────────── */
-function getBestVoice(lang: string): SpeechSynthesisVoice | null {
-  const voices = window.speechSynthesis.getVoices()
-  if (!voices.length) return null
-  // 1. Exact match (e.g. "en-IN")
-  const exact = voices.find(v => v.lang === lang)
-  if (exact) return exact
-  // 2. Language prefix match (e.g. "en" for "en-IN")
-  const prefix = lang.split("-")[0]
-  const partial = voices.find(v => v.lang.startsWith(prefix))
-  if (partial) return partial
-  // 3. Any English voice as last resort
-  const english = voices.find(v => v.lang.startsWith("en"))
-  return english ?? null
+/* ── Module-level audio tracker (single session at a time) ─────────────────── */
+let _currentAudio: HTMLAudioElement | null = null
+
+function cancelCurrentAudio() {
+  if (_currentAudio) { _currentAudio.pause(); _currentAudio = null }
+  window.speechSynthesis?.cancel()
 }
 
-function speakText(text: string, lang: string, onEnd?: () => void) {
-  if (!window.speechSynthesis) { onEnd?.(); return }
+/* ── Fallback: browser voice selection ──────────────────────────────────────── */
+function getBestVoice(lang: string): SpeechSynthesisVoice | null {
+  const voices = window.speechSynthesis?.getVoices() ?? []
+  if (!voices.length) return null
+  const exact = voices.find(v => v.lang === lang)
+  if (exact) return exact
+  const partial = voices.find(v => v.lang.startsWith(lang.split("-")[0]))
+  if (partial) return partial
+  return voices.find(v => v.lang.startsWith("en")) ?? null
+}
 
-  window.speechSynthesis.cancel()
+/* ── TTS: backend gTTS → MP3 audio element; browser TTS as fallback ─────────── */
+async function speakText(text: string, lang: string, onEnd?: () => void) {
+  cancelCurrentAudio()
 
-  const doSpeak = () => {
-    const u = new SpeechSynthesisUtterance(text.replace(/\*\*(.*?)\*\*/g, "$1"))
-    const voice = getBestVoice(lang)
-    if (voice) u.voice = voice
-    u.lang  = voice ? voice.lang : lang
-    u.rate  = 0.88
-    u.pitch = 1.05
-    u.volume = 1
+  const cleanText = text.replace(/\*\*(.*?)\*\*/g, "$1")
+  const BACKEND   = (import.meta.env.VITE_API_URL as string) || "http://localhost:8000"
+  const langCode  = lang.startsWith("hi") ? "hi" : lang.startsWith("kn") ? "kn" : "en"
 
-    let done = false
-    const finish = () => {
-      if (done) return
-      done = true
-      setTimeout(() => onEnd?.(), 600)
+  try {
+    const tok = localStorage.getItem("sahayak_token")
+    const hdr: Record<string, string> = { "Content-Type": "application/json" }
+    if (tok) hdr["Authorization"] = `Bearer ${tok}`
+
+    const res  = await fetch(`${BACKEND}/diagnose/tts`, {
+      method: "POST", headers: hdr,
+      body: JSON.stringify({ text: cleanText, lang: langCode }),
+    })
+    if (!res.ok) throw new Error(`TTS ${res.status}`)
+    const data = await res.json()                           // { file_path: "static/audio/xyz.mp3" }
+    const url  = `${BACKEND}/${(data.file_path as string).replace(/\\/g, "/")}`
+
+    const audio = new Audio(url)
+    _currentAudio = audio
+    audio.onended = () => { _currentAudio = null; setTimeout(() => onEnd?.(), 300) }
+    audio.onerror = () => { _currentAudio = null; onEnd?.() }
+    await audio.play()
+  } catch {
+    // Fallback: browser Web Speech API
+    if (!window.speechSynthesis) { onEnd?.(); return }
+    const doSpeak = () => {
+      const u = new SpeechSynthesisUtterance(cleanText)
+      const voice = getBestVoice(lang)
+      if (voice) u.voice = voice
+      u.lang = voice ? voice.lang : lang
+      u.rate = 0.88; u.pitch = 1.05; u.volume = 1
+      let done = false
+      const finish = () => { if (done) return; done = true; setTimeout(() => onEnd?.(), 600) }
+      u.onerror = () => finish()
+      const timer = setTimeout(finish, Math.max(5000, cleanText.split(/\s+/).length * 400 + 2000))
+      u.onend = () => { clearTimeout(timer); finish() }
+      window.speechSynthesis.speak(u)
     }
-
-    u.onerror = () => finish()
-
-    // Chrome bug: onend sometimes never fires — fallback after estimated duration
-    const wordCount = text.split(/\s+/).length
-    const timeoutMs = Math.max(5000, wordCount * 400 + 2000)
-    const timer = setTimeout(finish, timeoutMs)
-    u.onend = () => { clearTimeout(timer); finish() }
-
-    window.speechSynthesis.speak(u)
-  }
-
-  // Voices may not be loaded yet on first call — wait for them
-  const voices = window.speechSynthesis.getVoices()
-  if (voices.length > 0) {
-    doSpeak()
-  } else {
-    // Chrome loads voices async — listen for onvoiceschanged then speak
-    const handler = () => {
-      window.speechSynthesis.removeEventListener("voiceschanged", handler)
+    const voices = window.speechSynthesis.getVoices()
+    if (voices.length > 0) {
       doSpeak()
+    } else {
+      const handler = () => { window.speechSynthesis.removeEventListener("voiceschanged", handler); doSpeak() }
+      window.speechSynthesis.addEventListener("voiceschanged", handler)
+      setTimeout(() => { window.speechSynthesis.removeEventListener("voiceschanged", handler); doSpeak() }, 500)
     }
-    window.speechSynthesis.addEventListener("voiceschanged", handler)
-    // Safety: if event never fires (Firefox etc.), speak anyway after 500ms
-    setTimeout(() => {
-      window.speechSynthesis.removeEventListener("voiceschanged", handler)
-      doSpeak()
-    }, 500)
   }
 }
 
@@ -304,11 +309,27 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
   const slotsRef  = useRef<string[]>([])
   const langRef   = useRef<LangCode>("en-IN")   // always current lang for callbacks
 
+  // Refs for booking values — avoids stale closures in startRec / bookAppt
+  const docIdRef    = useRef<number | null>(null)
+  const pidRef      = useRef<number | null>(null)
+  const slotDateRef = useRef<string>("")
+  const docNameRef  = useRef<string>("Doctor")
+
+  // Guard against StrictMode double-fire: tracks "step:lang" already spoken
+  const lastSpokenRef = useRef<string>("")
+
+  // submitAnswerRef lets startRec ([] deps) always call the latest submitAnswer
+  const submitAnswerRef = useRef<((v: string) => void) | null>(null)
+
   // Keep refs in sync
-  useEffect(() => { stepRef.current  = step },    [step])
-  useEffect(() => { ansRef.current   = answers }, [answers])
-  useEffect(() => { slotsRef.current = slots },   [slots])
-  useEffect(() => { langRef.current  = lang  },   [lang])
+  useEffect(() => { stepRef.current    = step      }, [step])
+  useEffect(() => { ansRef.current     = answers   }, [answers])
+  useEffect(() => { slotsRef.current   = slots     }, [slots])
+  useEffect(() => { langRef.current    = lang      }, [lang])
+  useEffect(() => { docIdRef.current   = docId     }, [docId])
+  useEffect(() => { pidRef.current     = patientId }, [patientId])
+  useEffect(() => { slotDateRef.current = slotDate }, [slotDate])
+  useEffect(() => { docNameRef.current  = docName  }, [docName])
 
   /* ── Auto-scroll ── */
   useEffect(() => {
@@ -335,8 +356,8 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
     const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition
     if (!SR) return  // silently fall back to text input
 
-    // Stop any ongoing speech synthesis FIRST — prevents echo
-    window.speechSynthesis.cancel()
+    // Stop any ongoing speech/audio FIRST — prevents echo
+    cancelCurrentAudio()
 
     try { recRef.current?.stop() } catch { /* ignore */ }
 
@@ -358,19 +379,18 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
     rec.onend = () => {
       setListening(false)
       setInterim(t => {
-        if (t.trim()) submitAnswer(t.trim())
+        if (t.trim()) submitAnswerRef.current?.(t.trim())
         return ""
       })
     }
     rec.onerror = (e) => {
       const err = (e as any).error
-      if (err === "aborted" || err === "no-speech") {
-        setListening(false)
-        setInterim("")
-        return
-      }
       setListening(false)
       setInterim("")
+      if (err === "not-allowed" || err === "permission-denied") {
+        toast.error("Microphone blocked. Please allow mic access in your browser, or type your answer below.")
+      }
+      // "aborted" / "no-speech" are silent — user just didn't say anything
     }
     recRef.current = rec
     try { rec.start() } catch { /* browser may reject if already running */ }
@@ -383,18 +403,22 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
   }, [])
 
   /* ── Book appointment (demo mode OR real backend) ── */
+  // All values read from refs so this callback never goes stale — [] deps is safe
   const bookAppt = useCallback(async (slot: string) => {
     setStep("booking")
-    const ans     = ansRef.current
-    const curLang = langRef.current
+    const ans        = ansRef.current
+    const curLang    = langRef.current
+    const curDocId   = docIdRef.current
+    const curPid     = pidRef.current
+    const curDate    = slotDateRef.current
+    const curDocName = docNameRef.current
 
     if (isDemoMode()) {
-      // Save to shared demoStore so Doctor Appointments can see it
       const tok = makeToken()
       demoAppointments.add({
         patient_name:   ans.name  || (user as any)?.full_name || "Patient",
         reason:         reasonLabel,
-        preferred_time: `${slotDate} ${slot}`,
+        preferred_time: `${curDate} ${slot}`,
         phone:          ans.phone || (user as any)?.phone || "",
         status:         "pending",
         booked_by:      "patient",
@@ -404,10 +428,10 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
         name:       ans.name  || (user as any)?.full_name || "Patient",
         age:        ans.age,
         phone:      ans.phone || (user as any)?.phone || "",
-        date:       slotDate,
+        date:       curDate,
         slot,
         reason:     reasonLabel,
-        doctorName: docName || "Dr. Sharma (Demo)",
+        doctorName: curDocName || "Dr. Sharma (Demo)",
         apptId:     undefined,
       }
       setResult(r)
@@ -419,36 +443,47 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
       return
     }
 
-    const BASE  = (import.meta.env.VITE_API_URL as string) ?? ""
+    const BASE  = (import.meta.env.VITE_API_URL as string) || "/api"
     const token = localStorage.getItem("sahayak_token")
     const hdr: Record<string, string> = { "Content-Type": "application/json" }
     if (token) hdr["Authorization"] = `Bearer ${token}`
 
     try {
-      const res  = await fetch(`${BASE}/appointments/book`, {
+      const res = await fetch(`${BASE}/appointments/book`, {
         method: "POST", headers: hdr,
         body: JSON.stringify({
-          doctor_id:     docId,
-          patient_id:    patientId,
+          doctor_id:     curDocId,
+          patient_id:    curPid,
           patient_name:  ans.name || (user as any)?.full_name || "Patient",
           patient_phone: ans.phone || (user as any)?.phone || "",
-          date:          slotDate,
+          date:          curDate,
           time_slot:     slot,
           reason,
         }),
       })
-      const data = await res.json()
-      const tok  = makeToken()
 
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+
+      // Backend returns { success: false } when slot is already taken
+      if (data.success === false) {
+        const freeList = (data.free_slots as string[] | undefined)?.slice(0, 3).map(fmt).join(", ")
+        toast.error(data.message || "That slot is taken. Please choose another.")
+        if (freeList) addMsg("ai", `⚠️ ${data.message} — try: ${freeList}`)
+        setStep("slot_pick")
+        return
+      }
+
+      const tok = makeToken()
       const r: BookingResult = {
         token:      tok,
         name:       ans.name  || (user as any)?.full_name || "Patient",
         age:        ans.age,
         phone:      ans.phone || (user as any)?.phone || "",
-        date:       slotDate,
+        date:       curDate,
         slot,
         reason:     reasonLabel,
-        doctorName: docName,
+        doctorName: curDocName,
         apptId:     data.appt_id,
       }
       setResult(r)
@@ -456,11 +491,14 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
       const successMsg = PROMPTS[curLang].success(fmt(slot), tok)
       addMsg("ai", `🎉 ${successMsg}`)
       speakText(successMsg, curLang)
-    } catch {
+    } catch (err) {
+      console.error("[bookAppt] failed:", err)
       toast.error("Could not book appointment. Please try again.")
+      lastSpokenRef.current = ""   // reset guard so time question re-asks
       setStep("time")
     }
-  }, [docId, patientId, slotDate, reason, reasonLabel, docName, user, addMsg])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reason, reasonLabel, user, addMsg])  // all booking values come from refs — no stale closures
 
   /* ── Process user's answer ── */
   const submitAnswer = useCallback((value: string) => {
@@ -488,7 +526,7 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
       setAnswers(ans)
       const matched = spokenToSlot(value, slotsRef.current)
       if (matched) {
-        const when = slotDate === new Date().toISOString().slice(0, 10) ? "today" : "tomorrow"
+        const when = slotDateRef.current === new Date().toISOString().slice(0, 10) ? "today" : "tomorrow"
         aiSay(p.confirm(fmt(matched), when), () => bookAppt(matched))
       } else {
         const list = slotsRef.current.slice(0, 4).map(fmt).join(", ")
@@ -496,19 +534,26 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
         setStep("slot_pick")
       }
     }
-  }, [addMsg, aiSay, bookAppt, slotDate])
+  }, [addMsg, aiSay, bookAppt])
+
+  /* ── Keep submitAnswerRef current so startRec ([] deps) never goes stale ── */
+  useEffect(() => { submitAnswerRef.current = submitAnswer }, [submitAnswer])
 
   /* ── Drive conversation: re-runs when step changes OR language changes ── */
   useEffect(() => {
     if (!["name","age","phone","time"].includes(step)) return
-    // Stop any ongoing recognition before speaking
+
+    // StrictMode runs effects twice in dev — guard prevents double-speak/double-message
+    const key = `${step}:${langRef.current}`
+    if (lastSpokenRef.current === key) return
+    lastSpokenRef.current = key
+
     try { recRef.current?.stop() } catch { /* ignore */ }
     setListening(false)
     const p = PROMPTS[langRef.current]
-    // AI speaks the prompt — user must manually tap the mic button to respond
-    // (auto-starting mic causes echo as the mic picks up the speaker output)
+
     if (step === "name") {
-      aiSay(p.greeting(docName, reasonLabel))
+      aiSay(p.greeting(docNameRef.current, reasonLabel))
     } else if (step === "age") {
       aiSay(p.askAge(ansRef.current.name))
     } else if (step === "phone") {
@@ -517,7 +562,7 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
       const preview = slotsRef.current.slice(0, 3).map(fmt).join(", ")
       aiSay(p.askTime(preview))
     }
-  // aiSay changes when lang changes → effect re-runs with new language
+  // aiSay changes when lang changes → effect re-runs → new key → speaks in new language
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, aiSay])
 
@@ -576,7 +621,7 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
   function handleMic() {
     if (step === "booking") return
     if (speaking) {
-      window.speechSynthesis.cancel()
+      cancelCurrentAudio()
       setSpeaking(false)
       startRec()
       return
@@ -594,7 +639,7 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
   /* ── Slot tap (slot_pick step) ── */
   function pickSlot(s: string) {
     addMsg("user", fmt(s))
-    const when = slotDate === new Date().toISOString().slice(0, 10) ? "today" : "tomorrow"
+    const when = slotDateRef.current === new Date().toISOString().slice(0, 10) ? "today" : "tomorrow"
     const p = PROMPTS[langRef.current]
     aiSay(p.confirm(fmt(s), when), () => bookAppt(s))
   }
@@ -698,7 +743,7 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
   /* ══════════════════════════════════════════════════════════════════════════
      Main conversation UI
   ══════════════════════════════════════════════════════════════════════════ */
-  const inputLocked = speaking || step === "booking"
+  const inputLocked = step === "booking"  // text input locked only during API call
 
   return (
     <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}
@@ -707,7 +752,7 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
 
       {/* ── Header ── */}
       <div className="flex items-center justify-between px-5 py-4 bg-gradient-to-r from-blue-600/25 via-indigo-600/15 to-transparent border-b border-blue-500/20">
-        <button onClick={() => { window.speechSynthesis.cancel(); recRef.current?.stop(); onClose() }}
+        <button onClick={() => { cancelCurrentAudio(); recRef.current?.stop(); onClose() }}
           className="flex items-center gap-1.5 text-gray-400 hover:text-white text-sm transition-colors">
           <ArrowLeft className="w-4 h-4" /> Back
         </button>
@@ -848,17 +893,21 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
       {/* ── Input row ── */}
       <div className="px-4 pb-5 pt-3 border-t border-white/[0.06] space-y-3">
 
-        {/* Big mic button — primary action */}
-        {!inputLocked && (
+        {/* Big mic button — always visible (hidden only during API booking call) */}
+        {step !== "booking" && (
           <button onClick={handleMic}
             className={cn(
               "w-full flex items-center justify-center gap-3 py-3.5 rounded-xl font-semibold text-sm transition-all active:scale-95",
               listening
                 ? "bg-red-500/20 border-2 border-red-500/60 text-red-300 shadow-lg shadow-red-500/15"
+                : speaking
+                ? "bg-blue-500/10 border border-blue-500/30 text-blue-300 hover:bg-blue-500/20"
                 : "bg-blue-600/90 hover:bg-blue-600 text-white shadow-lg shadow-blue-500/20"
             )}>
             {listening
               ? <><MicOff className="w-5 h-5" /> Stop — submit answer</>
+              : speaking
+              ? <><Mic className="w-5 h-5" /> Tap to interrupt &amp; speak</>
               : <><Mic className="w-5 h-5" /> Tap to speak your answer</>
             }
           </button>
@@ -871,7 +920,7 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
             onChange={e => setTextInput(e.target.value)}
             onKeyDown={e => e.key === "Enter" && handleSend()}
             placeholder={
-              inputLocked ? "Please wait…"
+              inputLocked   ? "Please wait…"
               : step === "phone" ? "Or type your number here…"
               : "Or type your answer here…"
             }
