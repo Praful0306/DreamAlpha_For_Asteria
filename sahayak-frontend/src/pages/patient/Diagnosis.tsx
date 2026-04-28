@@ -50,9 +50,12 @@ export default function PatientDiagnosis() {
     if (!result?.clinical_summary) return
     setSpeaking(true)
     try {
+      const BACKEND = (import.meta.env.VITE_API_URL as string) || ""
       const res = await tts(result.clinical_summary, lang)
-      const audio = new Audio(res.audio_url)
+      const url = `${BACKEND}/${res.file_path.replace(/\\/g, "/")}`
+      const audio = new Audio(url)
       audio.onended = () => setSpeaking(false)
+      audio.onerror = () => setSpeaking(false)
       audio.play()
     } catch {
       setSpeaking(false)

@@ -81,13 +81,15 @@ async def _call_ollama_fast(system_prompt: str, user_prompt: str) -> str:
 
 # ── Groq call (primary — works on Render and all cloud environments) ──────────
 
-_GROQ_MODELS = ["llama-3.1-8b-instant", "llama3-8b-8192", "llama-3.3-70b-versatile"]
+_GROQ_MODELS = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"]
 
 
 def _groq_sync(api_key: str, system_prompt: str, user_prompt: str, model: str) -> str:
-    """Sync Groq call — run via asyncio.to_thread."""
+    """Sync Groq call — run via asyncio.to_thread.
+    timeout=10.0 is critical on Render: without it the HTTP call blocks the thread
+    indefinitely and asyncio.wait_for cannot cancel running threads."""
     from groq import Groq
-    client = Groq(api_key=api_key)
+    client = Groq(api_key=api_key, timeout=10.0)
     resp = client.chat.completions.create(
         model=model,
         messages=[
@@ -128,7 +130,7 @@ async def _call_groq_fast(system_prompt: str, user_prompt: str) -> str:
             try:
                 result = await asyncio.wait_for(
                     asyncio.to_thread(_groq_sync, key, system_prompt, user_prompt, model),
-                    timeout=15.0,
+                    timeout=12.0,
                 )
                 if result and result.strip():
                     logger.info("Groq diagnosis succeeded (model=%s)", model)

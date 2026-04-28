@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { Mic, FileText, Database, Brain, ShieldCheck, CheckCircle2 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -26,6 +27,16 @@ function stepIndex(step: PipelineStep) {
 
 export function DiagPipeline({ currentStep, className }: DiagPipelineProps) {
   const current = stepIndex(currentStep)
+  const [showSlow, setShowSlow] = useState(false)
+
+  useEffect(() => {
+    if (currentStep === "analyze") {
+      setShowSlow(false)
+      const t = setTimeout(() => setShowSlow(true), 8_000)
+      return () => clearTimeout(t)
+    }
+    setShowSlow(false)
+  }, [currentStep])
 
   return (
     <div className={cn("w-full", className)}>
@@ -91,6 +102,17 @@ export function DiagPipeline({ currentStep, className }: DiagPipelineProps) {
           )
         })}
       </div>
+
+      <AnimatePresence>
+        {showSlow && (
+          <motion.p
+            initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            className="text-center text-xs text-amber-400/80 mt-3 animate-pulse"
+          >
+            ⏳ AI server warming up — please wait a moment…
+          </motion.p>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

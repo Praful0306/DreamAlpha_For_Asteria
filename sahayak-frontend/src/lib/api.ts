@@ -173,14 +173,15 @@ export const diagnose = (payload: {
   additional_context?: string
   lang?: string
 }): Promise<DiagnosisResult> => {
-  // 25-second hard timeout — Groq should respond in <3s; this guards against hangs
+  // 65-second timeout: backend tries up to 2 keys × 2 models × 12s = 48s, then fallback.
+  // Must be > backend's worst-case so the backend gets to return its fallback response.
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 25_000)
+  const timer = setTimeout(() => controller.abort(), 65_000)
   return post<DiagnosisResult>("/diagnose/", payload, controller.signal)
     .then(r => { clearTimeout(timer); return r })
     .catch(err => {
       clearTimeout(timer)
-      if (err?.name === "AbortError") throw new Error("Diagnosis timed out — please try again")
+      if (err?.name === "AbortError") throw new Error("Diagnosis timed out — server may be busy, please try again")
       throw err
     })
 }
@@ -204,7 +205,7 @@ export const extractFile = (file: File) => {
 }
 
 export const tts = (text: string, lang = "en") =>
-  post<{ audio_url: string; text: string }>("/diagnose/tts", { text, lang })
+  post<{ file_path: string; message: string }>("/diagnose/tts", { text, lang })
 
 // ── Patient ───────────────────────────────────────────────────────────────────
 
