@@ -207,12 +207,21 @@ async def generate_diagnosis(
     3. Call CLINICAL_ENGINE for grounded safety and risk assessment.
     4. Merge results for final response.
     """
-    # Step 1: FAISS RAG — get ICMR guideline context for these symptoms
-    rag_context = _get_rag_context(symptoms)
-    if rag_context:
-        logger.info("RAG context injected (%d chars)", len(rag_context))
-    else:
-        logger.debug("No RAG context — proceeding without ICMR guidelines")
+    # Step 1: FAISS RAG — get ICMR guideline context for these symptoms.
+    # Run in a thread so the blocking SentenceTransformer encode() never freezes
+    # the event loop. 5s timeout: skip gracefully if the model is still loading.
+    try:
+        rag_context = await asyncio.wait_for(
+            asyncio.to_thread(_get_rag_context, symptoms),
+            timeout=5.0,
+        )
+        if rag_context:
+            logger.info("RAG context injected (%d chars)", len(rag_context))
+        else:
+            logger.debug("No RAG context — proceeding without ICMR guidelines")
+    except (asyncio.TimeoutError, Exception) as _rag_err:
+        rag_context = ""
+        logger.debug("RAG skipped (%s) — continuing without ICMR context", _rag_err)
 
     # Step 2: LLM Extraction (with RAG context injected into system prompt)
     system_prompt = DIAGNOSIS_SYSTEM_TEMPLATE.format(rag_context=rag_context)
