@@ -83,12 +83,16 @@ export function VoiceButton({ onResult, compact = false, className }: VoiceButto
       </div>
 
       {!compact && (
-        <div className="text-center max-w-48">
+        <div className="text-center max-w-xs">
           <p className={cn("text-sm text-center", isError ? "text-red-400" : "text-muted-foreground")}>
             {LABELS[state]}
           </p>
           {isError && error && (
-            <p className="text-xs text-red-400/70 mt-1 leading-snug">{error}</p>
+            <p className="text-xs text-red-400/70 mt-1 leading-snug">
+              {error.startsWith("Demo mode")
+                ? "🎯 You're in demo mode — type symptoms in the box below instead"
+                : error}
+            </p>
           )}
         </div>
       )}

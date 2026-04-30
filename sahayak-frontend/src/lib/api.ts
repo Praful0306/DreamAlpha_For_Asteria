@@ -63,6 +63,9 @@ const patch = <T>(path: string, body: unknown) => request<T>("PATCH",  path, bod
 
 async function postForm<T>(path: string, formData: FormData): Promise<T> {
   const token = getToken()
+  if (token === "demo_token") {
+    throw new Error("Demo mode — create a real account to use this feature.")
+  }
   const headers: Record<string, string> = {}
   if (token) headers["Authorization"] = `Bearer ${token}`
   const res = await fetch(`${BASE}${path}`, { method: "POST", headers, body: formData })
