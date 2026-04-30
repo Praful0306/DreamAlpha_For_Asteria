@@ -1,6 +1,6 @@
 ╔══════════════════════════════════════════════════════════════════════════╗
 ║            SAHAYAK AI — Complete Fixed Build                           ║
-║            Team DreamAlpha · AMD Slingshot Hackathon                   ║
+║            Team DreamAlpha · Asteria 2026                   ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 
 VERSION: v3.3.1-fixed  (31 bugs fixed across 3 sessions)

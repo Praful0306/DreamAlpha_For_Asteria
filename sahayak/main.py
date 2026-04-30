@@ -65,11 +65,21 @@ async def lifespan(app: FastAPI):
         logger.warning(f"NPU init skipped: {e}")
 
     # Heavy models (faster-whisper + EasyOCR) load in the BACKGROUND after startup.
-    # This keeps the app ready to serve /health immediately so Render's 5-second
-    # health check passes.  Models lazy-load on first real request anyway if this
-    # background task hasn't finished yet — zero functionality loss.
+    # This keeps the app ready to serve /health immediately so Render's health
+    # check passes.  Models lazy-load on first real request anyway if the background
+    # task hasn't finished — zero functionality loss.
+    #
+    # On Render free tier (512 MB RAM) we skip eager preloads entirely:
+    #   • faster-whisper small = 244 MB — not worth loading when Sarvam AI (online) is primary
+    #   • EasyOCR = ~300 MB — skip; Gemini OCR is primary on Render
+    _on_render = bool(os.getenv("RENDER"))
+
     async def _preload_models():
-        await asyncio.sleep(15)  # give health check time to pass first
+        await asyncio.sleep(15)  # let health check pass first
+        if _on_render:
+            logger.info("BG: Render detected — skipping heavy model preloads to stay within 512 MB RAM limit")
+            logger.info("BG:   STT → Sarvam AI (online primary) | OCR → Gemini (online primary)")
+            return
         try:
             from services.asr_service import _load_whisper_model
             logger.info("BG: pre-loading faster-whisper small (multilingual, int8)…")
@@ -93,7 +103,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Sahayak AI — Offline Multimodal Medical Assistant",
-    description="ASHA worker clinical support. LLaMA 70B + Mixtral + Groq. ICMR/WHO RAG. AMD Ryzen AI NPU.",
+    description="ASHA worker clinical support. LLaMA 70B + Mixtral + Groq. ICMR/WHO RAG. AMD Ryzen AI NPU. Asteria 2026.",
     version="3.3.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",

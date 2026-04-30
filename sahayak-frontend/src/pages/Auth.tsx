@@ -223,7 +223,7 @@ export default function Auth() {
           </div>
         </div>
 
-        <p className="text-gray-600 text-sm">Team DreamAlpha · AMD Slingshot 2025</p>
+        <p className="text-gray-600 text-sm">Team DreamAlpha · Asteria 2026</p>
       </div>
 
       {/* ── Right panel ─────────────────────────────────────────────────────── */}

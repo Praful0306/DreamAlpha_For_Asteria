@@ -1,6 +1,6 @@
 # Sahayak AI — Voice-First Rural Health Intelligence Platform
 
-> **AMD Slingshot Hackathon 2025 · Team DreamAlpha**  
+> **Asteria 2026 · Team DreamAlpha**  
 > Empowering ASHA workers with AI-powered diagnostics, running entirely on AMD Ryzen AI NPU — no cloud required.
 
 ---
@@ -685,7 +685,7 @@ See `Sahayak_AI_MakeCom_VAPI_Setup_Guide.pdf` for step-by-step configuration.
 
 ## Team
 
-**Team DreamAlpha** — AMD Slingshot Hackathon 2025
+**Team DreamAlpha** — Asteria 2026
 
 | Role | Contributor |
 |------|-------------|
@@ -698,7 +698,7 @@ See `Sahayak_AI_MakeCom_VAPI_Setup_Guide.pdf` for step-by-step configuration.
 
 ## License
 
-This project is submitted for the AMD Slingshot Hackathon 2025 under educational/research use.
+This project is submitted for the Asteria 2026 under educational/research use.
 
 Clinical guidance is based on ICMR (Indian Council of Medical Research) publicly available guidelines. This software is **not a substitute for professional medical advice**.
 

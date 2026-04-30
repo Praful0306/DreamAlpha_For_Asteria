@@ -548,7 +548,7 @@ export default function Landing() {
               <motion.div variants={fadeUp}>
                 <span className="inline-flex items-center gap-2 bg-gray-900 text-white text-xs font-medium px-3.5 py-1.5 rounded-full">
                   <Zap className="w-3 h-3 text-orange-400" />
-                  SAHAYAK AI 2.0 — AMD SLINGSHOT HACKATHON
+                  SAHAYAK AI 2.0 — ASTERIA 2026
                 </span>
               </motion.div>
 
@@ -882,7 +882,7 @@ export default function Landing() {
             <span className="font-bold text-gray-900">Sahayak AI</span>
           </div>
           <p className="text-sm text-gray-400">
-            Team DreamAlpha · AMD Slingshot Hackathon 2025 · Built with ❤️ for 900M rural Indians
+            Team DreamAlpha · Asteria 2026 · Built with ❤️ for 900M rural Indians
           </p>
           <div className="flex gap-4 text-sm text-gray-400">
             <button

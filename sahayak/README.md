@@ -1,6 +1,6 @@
 # Sahayak AI v2.0 — Offline Multimodal Medical Assistant
 
-> AMD Slingshot Hackathon | Team DreamAlpha | Built for ASHA workers in Rural India
+> Asteria 2026 | Team DreamAlpha | Built for ASHA workers in Rural India
 
 ---
 

@@ -108,24 +108,29 @@ async def _sarvam_asr(audio_bytes: bytes, content_type: str, sarvam_lang: str, a
 _whisper_model = None
 
 def _load_whisper_model():
-    """Blocking load of faster-whisper 'small' — much better than tiny for Indian languages.
-    244MB download on first use; cached at ~/.cache/huggingface/hub/
+    """Blocking load of faster-whisper model.
+    - Local / AMD NPU : uses 'small' (244MB, best accuracy for Indian languages)
+    - Render free tier: uses 'tiny'  (39MB,  fits within 512 MB RAM limit)
     Called via asyncio.to_thread so event loop stays free.
     """
     global _whisper_model
     if _whisper_model is not None:
         return _whisper_model
+    # On Render free tier (512 MB RAM) use tiny to avoid OOM crashes.
+    # Sarvam AI is the online primary anyway; whisper is only the offline fallback.
+    on_render  = bool(os.getenv("RENDER"))
+    model_size = "tiny" if on_render else "small"
     try:
         from faster_whisper import WhisperModel
-        logger.info("Loading faster-whisper small (int8, CPU)…")
+        logger.info("Loading faster-whisper %s (int8, CPU)…", model_size)
         _whisper_model = WhisperModel(
-            "small",        # 244MB — significantly better multilingual vs tiny (39MB)
+            model_size,
             device="cpu",
             compute_type="int8",
-            num_workers=2,
-            cpu_threads=4,
+            num_workers=1 if on_render else 2,
+            cpu_threads=2 if on_render else 4,
         )
-        logger.info("faster-whisper small loaded OK")
+        logger.info("faster-whisper %s loaded OK", model_size)
     except Exception as e:
         logger.warning("faster-whisper failed to load: %s", e)
     return _whisper_model
