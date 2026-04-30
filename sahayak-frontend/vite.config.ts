@@ -20,6 +20,11 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           rewrite: (p) => p.replace(/^\/api/, ""),
         },
+        // Proxy static audio files (TTS output) to the backend
+        "/static": {
+          target: "http://localhost:8000",
+          changeOrigin: true,
+        },
         // ── Omnidim outbound call dispatch ───────────────────────────────────
         // Proxied server-side so auth header is injected without CORS issues.
         // Frontend calls /call-dispatch; Vite forwards to:
