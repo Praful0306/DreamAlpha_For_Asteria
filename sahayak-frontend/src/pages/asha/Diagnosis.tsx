@@ -17,15 +17,15 @@ import { useEffect } from "react"
 import { AlertCircle, CheckCircle2, Pill, Clock, Users, FileOutput } from "lucide-react"
 
 const LANG_OPTIONS = [
+  { value: "kn", label: "ಕನ್ನಡ (Kannada)" },
   { value: "en", label: "English" },
-  { value: "hi", label: "Hindi (हिंदी)" },
-  { value: "kn", label: "Kannada (ಕನ್ನಡ)" },
-  { value: "mr", label: "Marathi (मराठी)" },
-  { value: "te", label: "Telugu (తెలుగు)" },
-  { value: "ta", label: "Tamil (தமிழ்)" },
-  { value: "bn", label: "Bengali (বাংলা)" },
-  { value: "gu", label: "Gujarati (ગુજરાતી)" },
-  { value: "pa", label: "Punjabi (ਪੰਜਾਬੀ)" },
+  { value: "hi", label: "हिंदी (Hindi)" },
+  { value: "te", label: "తెలుగు (Telugu)" },
+  { value: "ta", label: "தமிழ் (Tamil)" },
+  { value: "mr", label: "मराठी (Marathi)" },
+  { value: "bn", label: "বাংলা (Bengali)" },
+  { value: "gu", label: "ગુજરાતી (Gujarati)" },
+  { value: "pa", label: "ਪੰਜਾਬੀ (Punjabi)" },
 ]
 
 export default function AshaDiagnosis() {
@@ -133,7 +133,7 @@ export default function AshaDiagnosis() {
               </Select>
             </div>
             <div>
-              <Label className="text-gray-400 text-xs mb-1.5 block">Language</Label>
+              <Label className="text-gray-400 text-xs mb-1.5 block">Language / ಭಾಷೆ / भाषा</Label>
               <Select value={lang} onValueChange={setLang}>
                 <SelectTrigger className="bg-white/5 border-white/10 text-white h-10">
                   <SelectValue />

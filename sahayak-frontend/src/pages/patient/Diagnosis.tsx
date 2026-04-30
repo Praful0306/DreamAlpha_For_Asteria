@@ -5,6 +5,8 @@ import { Send, RotateCcw, Download, Volume2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { RiskBadge } from "@/components/shared/RiskBadge"
 import { DiagPipeline, type PipelineStep } from "@/components/shared/DiagPipeline"
@@ -13,8 +15,20 @@ import { diagnose, tts, type DiagnosisResult } from "@/lib/api"
 import { useStore } from "@/store/useStore"
 import { AlertCircle, CheckCircle2, Pill, Clock, Users } from "lucide-react"
 
+const LANG_OPTIONS = [
+  { value: "kn", label: "ಕನ್ನಡ (Kannada)" },
+  { value: "en", label: "English" },
+  { value: "hi", label: "हिंदी (Hindi)" },
+  { value: "te", label: "తెలుగు (Telugu)" },
+  { value: "ta", label: "தமிழ் (Tamil)" },
+  { value: "mr", label: "मराठी (Marathi)" },
+  { value: "bn", label: "বাংলা (Bengali)" },
+  { value: "gu", label: "ગુજરાતી (Gujarati)" },
+  { value: "pa", label: "ਪੰਜਾਬੀ (Punjabi)" },
+]
+
 export default function PatientDiagnosis() {
-  const { user, lang } = useStore()
+  const { user, lang, setLang } = useStore()
   const [symptoms,  setSymptoms]  = useState("")
   const [step,      setStep]      = useState<PipelineStep>("idle")
   const [result,    setResult]    = useState<DiagnosisResult | null>(null)
@@ -81,6 +95,23 @@ export default function PatientDiagnosis() {
       {/* Input area */}
       <Card className="bg-[#1a1a22] border-[#2a2a35]">
         <CardContent className="p-6 space-y-5">
+          {/* Language selector */}
+          <div>
+            <Label className="text-gray-400 text-xs mb-1.5 block">Language / ಭಾಷೆ / भाषा</Label>
+            <Select value={lang} onValueChange={setLang} disabled={isLoading}>
+              <SelectTrigger className="bg-white/5 border-white/10 text-white h-10">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-[#1a1a22] border-[#2a2a35]">
+                {LANG_OPTIONS.map(l => (
+                  <SelectItem key={l.value} value={l.value} className="text-white focus:bg-white/10">
+                    {l.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           {/* Voice button */}
           <div className="flex justify-center">
             <VoiceButton onResult={(text) => setSymptoms((s) => s ? s + " " + text : text)} />
