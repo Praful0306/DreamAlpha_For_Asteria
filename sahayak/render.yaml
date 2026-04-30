@@ -12,7 +12,7 @@ services:
     startCommand: uv run uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: FRONTEND_URL
-        value: https://sahayak-ai.vercel.app
+        value: https://dream-alpha-for-amd.vercel.app
       - key: GROQ_API_KEY_1
         sync: false
       - key: GROQ_API_KEY_2
@@ -56,9 +56,29 @@ services:
       - key: OMNIDIM_PHONE_NUMBER
         sync: false
       - key: SUPABASE_URL
-        sync: false
+        value: https://cyjkgrlfxqsrodqbgcps.supabase.co
       - key: SUPABASE_KEY
         sync: false
+      - key: SARVAM_API_KEY
+        sync: false
+      - key: OPENAI_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: WHISPER_MODEL
+        value: whisper-large-v3
+      - key: GROQ_LLM_MODEL
+        value: llama-3.3-70b-versatile
+      - key: LLAMA_MODEL_ID
+        value: us.meta.llama3-1-70b-instruct-v1:0
+      - key: LLAMA_AWS_REGION
+        value: us-east-1
+      - key: MIXTRAL_MODEL_ID
+        value: mistral.mixtral-8x7b-instruct-v0:1
+      - key: MIXTRAL_AWS_REGION
+        value: us-east-1
+      - key: OMNIDIM_APPT_AGENT_ID
+        value: "149053"
+      - key: OMNIDIM_ASHA_AGENT_ID
+        value: "149113"
       - key: TWILIO_ACCOUNT_SID
         sync: false
       - key: TWILIO_AUTH_TOKEN
