@@ -4,13 +4,12 @@ import { motion, AnimatePresence } from "framer-motion"
 import {
   Users, Mic, Map, CheckSquare, Trophy, Star, Zap,
   AlertTriangle, Bell, Send, PhoneIncoming, PhoneOutgoing,
-  Heart, ClipboardList, Clock, MapPin, UserCheck,
+  Heart, ClipboardList, Clock, MapPin, UserCheck, Phone,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Progress } from "@/components/ui/progress"
 import { RiskBadge } from "@/components/shared/RiskBadge"
-import { VAPICallButton } from "@/components/shared/VAPICallButton"
 import { useStore } from "@/store/useStore"
 import {
   getMyPatients, getAnalyticsStats, getDeepImpact,
@@ -43,6 +42,37 @@ function AnimatedCounter({ to, suffix = "" }: { to: number; suffix?: string }) {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const COLORS = ["#f97316", "#3b82f6", "#22c55e", "#eab308", "#ef4444", "#8b5cf6"]
+
+// ── Omnidim ASHA widget loader ────────────────────────────────────────────────
+function useOmnidimAshaWidget() {
+  useEffect(() => {
+    const src = import.meta.env.VITE_OMNIDIM_WIDGET_SRC as string | undefined
+    if (!src) return
+    const id = "omnidim-asha-widget"
+    if (document.getElementById(id)) return
+    const s = document.createElement("script")
+    s.id = id
+    s.src = src
+    s.setAttribute("data-agent-id", (import.meta.env.VITE_OMNIDIM_ASHA_AGENT_ID as string) || "149113")
+    s.async = true
+    document.body.appendChild(s)
+    return () => { try { document.body.removeChild(s) } catch { /**/ } }
+  }, [])
+}
+
+function openOmnidimWidget() {
+  const w = window as Record<string, unknown>
+  for (const key of ["omnidimChat", "OmnidimWidget", "omnidim", "OmnidimChat"]) {
+    const api = w[key] as { open?: () => void; show?: () => void } | undefined
+    if (typeof api?.open  === "function") { api.open();  return true }
+    if (typeof api?.show  === "function") { api.show();  return true }
+  }
+  for (const sel of ["#omnidim-chat-button","#omnidim-widget-button","[id^='omnidim']","[class*='omnidim'][class*='button']"]) {
+    const el = document.querySelector<HTMLElement>(sel)
+    if (el) { el.click(); return true }
+  }
+  return false
+}
 
 const MOCK_PATIENTS: Patient[] = [
   { id: 1, name: "Priya Devi",   age: 28, gender: "F", village: "Rampur",    risk_level: "HIGH",      diagnosis: "Suspected Dengue" },
@@ -155,6 +185,9 @@ export default function AshaDashboard() {
   const [callLogs, setCallLogs] = useState<AshaCallLog[]>([])
   const [alerting, setAlerting] = useState<Record<number, boolean>>({})
   const [toast,    setToast]    = useState<string | null>(null)
+
+  useOmnidimAshaWidget()
+  const [callOpen, setCallOpen] = useState(false)
 
   useEffect(() => {
     // ── Demo mode: use registered patients from localStorage ─────────
@@ -287,11 +320,14 @@ export default function AshaDashboard() {
                   </p>
                 </div>
                 <div className="shrink-0">
-                  <VAPICallButton
-                    patientName={user?.name ?? "ASHA Worker"}
-                    context="Provide clinical decision support for rural ASHA workers in India"
-                    language="hi-IN"
-                  />
+                  <Button
+                    onClick={() => { setCallOpen(true); openOmnidimWidget() }}
+                    className="bg-green-600 hover:bg-green-700 text-white gap-2 font-medium px-4"
+                  >
+                    <Phone className="w-3.5 h-3.5" />
+                    AI Call
+                    {callOpen && <span className="text-[10px] opacity-70 ml-1">Active</span>}
+                  </Button>
                 </div>
               </div>
             </GlassCard>

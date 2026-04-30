@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
-import { lazy, Suspense } from "react"
+import { lazy, Suspense, useEffect } from "react"
+import { isDemoMode, seedDemoData } from "@/lib/demoStore"
 import { Toaster } from "sonner"
 import { AnimatePresence } from "framer-motion"
 import { useStore } from "@/store/useStore"
@@ -64,6 +65,10 @@ function PageLoader() {
 }
 
 export default function App() {
+  useEffect(() => {
+    if (isDemoMode()) seedDemoData()
+  }, [])
+
   return (
     <BrowserRouter>
       <Suspense fallback={<PageLoader />}>

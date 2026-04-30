@@ -327,3 +327,82 @@ export function syncReminderToImmunization(
     dispatchSync()
   } catch { /* ignore */ }
 }
+
+// ── Demo data seed (judges / hackathon demo) ──────────────────────────────────
+
+const DEMO_SEED_KEY = "sahayak_demo_seeded_v3"
+
+/**
+ * Pre-seeds all demo stores with realistic Indian rural health data.
+ * Runs once per browser session (guarded by a version flag in localStorage).
+ * Call this at app startup when isDemoMode() is true.
+ */
+export function seedDemoData(): void {
+  if (localStorage.getItem(DEMO_SEED_KEY)) return   // already seeded
+
+  // ── Patients ──────────────────────────────────────────────────────────────
+  demoSet("asha_patients", [
+    { id: 1,  name: "Priya Devi",    age: 28, gender: "F", village: "Rampur",    phone: "9876543210", risk_level: "HIGH",      diagnosis: "Suspected Dengue",    last_visit: "2026-04-29" },
+    { id: 2,  name: "Rajesh Kumar",  age: 45, gender: "M", village: "Sitapur",   phone: "9812345678", risk_level: "MEDIUM",    diagnosis: "Hypertension",        last_visit: "2026-04-28" },
+    { id: 3,  name: "Sunita Bai",    age: 32, gender: "F", village: "Rampur",    phone: "9898765432", risk_level: "LOW",       diagnosis: "Iron Deficiency Anaemia", last_visit: "2026-04-27" },
+    { id: 4,  name: "Arun Singh",    age: 8,  gender: "M", village: "Hardoi",    phone: "9754321098", risk_level: "HIGH",      diagnosis: "Malaria Suspect",     last_visit: "2026-04-30" },
+    { id: 5,  name: "Meera Devi",    age: 25, gender: "F", village: "Rampur",    phone: "9765432109", risk_level: "LOW",       diagnosis: "ANC 2nd Trimester",   last_visit: "2026-04-26" },
+    { id: 6,  name: "Ravi Prasad",   age: 60, gender: "M", village: "Lakhimpur", phone: "9743210987", risk_level: "EMERGENCY", diagnosis: "Chest Pain / Hypertension", last_visit: "2026-04-30" },
+    { id: 7,  name: "Kavita Singh",  age: 22, gender: "F", village: "Sitapur",   phone: "9721098765", risk_level: "MEDIUM",    diagnosis: "Typhoid Suspect",     last_visit: "2026-04-25" },
+    { id: 8,  name: "Mohan Lal",     age: 38, gender: "M", village: "Rampur",    phone: "9710987654", risk_level: "LOW",       diagnosis: "TB Screening – Negative", last_visit: "2026-04-24" },
+  ])
+
+  // ── Call Logs ─────────────────────────────────────────────────────────────
+  const now = Date.now()
+  demoSet("call_logs", [
+    { id: String(now-1), direction: "outbound", call_type: "health_check",  patient_phone: "9876543210", patient_name: "Priya Devi",   health_update: "Fever persisting, advised hospital visit today",  symptoms: "High fever 102°F, headache, joint pain", visit_requested: true,  urgency: "urgent",  status: "completed", asha_name: "Sunita", created_at: new Date(now - 2*3600000).toISOString() },
+    { id: String(now-2), direction: "inbound",  call_type: "emergency",     patient_phone: "9743210987", patient_name: "Ravi Prasad",  health_update: "Severe chest pain, referred to PHC immediately",  symptoms: "Chest pain, shortness of breath, sweating", visit_requested: true, urgency: "urgent",  status: "completed", asha_name: "Sunita", created_at: new Date(now - 5*3600000).toISOString() },
+    { id: String(now-3), direction: "outbound", call_type: "followup",      patient_phone: "9812345678", patient_name: "Rajesh Kumar", health_update: "BP 148/92 — advised low salt diet, follow-up in 7 days", symptoms: "Headache, dizziness", visit_requested: false, urgency: null, status: "completed", asha_name: "Sunita", created_at: new Date(now - 1*86400000).toISOString() },
+    { id: String(now-4), direction: "outbound", call_type: "reminder",      patient_phone: "9765432109", patient_name: "Meera Devi",   health_update: "Reminded for ANC 3rd visit. Will come Thursday.",  symptoms: null, visit_requested: false, urgency: null, status: "completed", asha_name: "Sunita", created_at: new Date(now - 2*86400000).toISOString() },
+    { id: String(now-5), direction: "outbound", call_type: "health_check",  patient_phone: "9754321098", patient_name: "Arun Singh",   health_update: "Child has chills and rigour — malaria RDT positive. Referred to PHC.", symptoms: "Fever 103°F, chills, vomiting", visit_requested: true, urgency: "urgent", status: "completed", asha_name: "Sunita", created_at: new Date(now - 3*86400000).toISOString() },
+  ])
+
+  // ── Health Records ────────────────────────────────────────────────────────
+  demoSet("health_records", [
+    { id: String(now+1), patient_name: "Priya Devi",   record_type: "call",        title: "Dengue Follow-up",       summary: "Platelet count low, advised immediate hospitalisation",   bp: "110/70", hr: "98",  temp: "102", spo2: "97", risk_level: "HIGH",      created_at: new Date(now - 2*3600000).toISOString(),   source: "asha_call" },
+    { id: String(now+2), patient_name: "Ravi Prasad",  record_type: "call",        title: "Emergency – Chest Pain", summary: "Referred to District Hospital. Possible cardiac event.",  bp: "170/100",hr: "112", temp: "98.6",spo2: "94", risk_level: "EMERGENCY", created_at: new Date(now - 5*3600000).toISOString(),   source: "asha_call" },
+    { id: String(now+3), patient_name: "Rajesh Kumar", record_type: "appointment", title: "Hypertension Review",    summary: "BP managed with medication. Follow-up in 7 days.",        bp: "148/92", hr: "78",  temp: "98.4",spo2: "98", risk_level: "MEDIUM",    created_at: new Date(now - 1*86400000).toISOString(),  source: "manual" },
+    { id: String(now+4), patient_name: "Arun Singh",   record_type: "report",      title: "Malaria RDT Positive",   summary: "Plasmodium vivax. Artemether-lumefantrine prescribed.",   bp: null,     hr: "108", temp: "103", spo2: "96", risk_level: "HIGH",      created_at: new Date(now - 3*86400000).toISOString(),  source: "asha_call" },
+    { id: String(now+5), patient_name: "Sunita Bai",   record_type: "report",      title: "Anaemia Screening",      summary: "Hb 8.2 g/dL. IFA tablets distributed. Re-test in 30 days.", bp: "100/65",hr: "88",  temp: "98.2",spo2: "98", risk_level: "LOW",       created_at: new Date(now - 5*86400000).toISOString(),  source: "patient_upload" },
+  ])
+
+  // ── Maternal Mothers ──────────────────────────────────────────────────────
+  demoSet("maternal_mothers", [
+    { id: "m1", name: "Sunita Bai",  age: 24, village: "Rampur",    weeks: 32, edd: "2026-07-20", risk: "LOW",    anc_done: 2, anc_total: 4, ifa_given: true,  tt_done: true,  phone: "9898765432" },
+    { id: "m2", name: "Meera Devi",  age: 25, village: "Rampur",    weeks: 20, edd: "2026-09-15", risk: "MEDIUM", anc_done: 1, anc_total: 4, ifa_given: true,  tt_done: false, phone: "9765432109" },
+    { id: "m3", name: "Geeta Singh", age: 30, village: "Sultanpur", weeks: 38, edd: "2026-05-10", risk: "HIGH",   anc_done: 3, anc_total: 4, ifa_given: true,  tt_done: true,  phone: "9700123456" },
+  ])
+
+  // ── Tasks / Reminders ─────────────────────────────────────────────────────
+  demoSet("asha_reminders", [
+    { id: "t1", title: "Visit Sunita Devi for ANC 3rd visit",     patient: "Sunita Bai",  priority: "high",   due: "2026-05-02", done: false },
+    { id: "t2", title: "Distribute IFA tablets in Ward 5",        patient: null,          priority: "high",   due: "2026-05-01", done: false },
+    { id: "t3", title: "Update register for malaria surveillance",patient: null,          priority: "medium", due: "2026-05-03", done: false },
+    { id: "t4", title: "Refer Priya to PHC for hemoglobin <7",    patient: "Priya Devi",  priority: "high",   due: "2026-05-01", done: false },
+    { id: "t5", title: "Follow up with Arun Singh after malaria treatment", patient: "Arun Singh", priority: "high", due: "2026-05-04", done: false },
+    { id: "t6", title: "Schedule BCG vaccination for newborn",    patient: "Geeta Singh", priority: "medium", due: "2026-05-05", done: false },
+  ])
+
+  // ── Immunization children ────────────────────────────────────────────────
+  demoSet("immunization_children", [
+    { id: "c1", name: "Baby of Geeta", mother: "Geeta Singh", dob: "2026-04-15", village: "Sultanpur",
+      vaccines: { bcg: "done", hepb0: "done", opv0: "done", penta1: "due", opv1: "due", rota1: "upcoming" } },
+    { id: "c2", name: "Rahul Kumar",   mother: "Anita Kumar",  dob: "2025-11-10", village: "Rampur",
+      vaccines: { bcg: "done", hepb0: "done", opv0: "done", penta1: "done", opv1: "done", rota1: "done", penta2: "done", opv2: "done", rota2: "due", penta3: "upcoming" } },
+  ])
+
+  // ── Appointments ──────────────────────────────────────────────────────────
+  demoSet("appointments", [
+    { id: String(now+10), patient_name: "Priya Devi",   reason: "Dengue follow-up",       preferred_time: "2026-05-01 10:00", phone: "9876543210", status: "confirmed", booked_by: "asha",    created_at: new Date(now - 3*3600000).toISOString() },
+    { id: String(now+11), patient_name: "Rajesh Kumar", reason: "Blood pressure check",   preferred_time: "2026-05-02 11:00", phone: "9812345678", status: "pending",   booked_by: "patient", created_at: new Date(now - 6*3600000).toISOString() },
+    { id: String(now+12), patient_name: "Meera Devi",   reason: "ANC 3rd trimester visit",preferred_time: "2026-05-03 09:00", phone: "9765432109", status: "pending",   booked_by: "asha",    created_at: new Date(now - 1*86400000).toISOString() },
+  ])
+
+  localStorage.setItem(DEMO_SEED_KEY, "1")
+  dispatchSync()
+}
