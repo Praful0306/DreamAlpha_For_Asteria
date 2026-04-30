@@ -71,10 +71,10 @@ async def lifespan(app: FastAPI):
     async def _preload_models():
         await asyncio.sleep(15)  # give health check time to pass first
         try:
-            from services.asr_service import _get_whisper_model
-            logger.info("BG: pre-loading faster-whisper tiny (offline, int8)…")
-            await asyncio.to_thread(_get_whisper_model)
-            logger.info("BG: faster-whisper ready ✓ — voice transcription is OFFLINE")
+            from services.asr_service import _load_whisper_model
+            logger.info("BG: pre-loading faster-whisper small (multilingual, int8)…")
+            await asyncio.to_thread(_load_whisper_model)
+            logger.info("BG: faster-whisper small ready ✓ — voice works OFFLINE (kn/hi/en/te/ta)")
         except Exception as e:
             logger.warning(f"BG: faster-whisper pre-load failed: {e}")
         try:

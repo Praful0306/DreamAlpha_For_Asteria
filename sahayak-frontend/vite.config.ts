@@ -16,13 +16,13 @@ export default defineConfig(({ mode }) => {
     server: {
       proxy: {
         "/api": {
-          target: "http://localhost:8000",
+          target: "http://localhost:8001",
           changeOrigin: true,
           rewrite: (p) => p.replace(/^\/api/, ""),
         },
         // Proxy static audio files (TTS output) to the backend
         "/static": {
-          target: "http://localhost:8000",
+          target: "http://localhost:8001",
           changeOrigin: true,
         },
         // ── Omnidim outbound call dispatch ───────────────────────────────────

@@ -1,22 +1,37 @@
 """
 Sahayak AI — LLM Logic and RAG Service logic.
-This version restricts LLM to extraction and uses CLINICAL_ENGINE
-for all medical reasoning and correctness.
-FAISS RAG context is injected into the LLM prompt for ICMR grounding.
 
-LLM call order: Groq key-1 → Groq key-2 → Ollama (local) → hardcoded fallback
-Groq is primary because it works on all environments (Render, cloud, local with internet).
-Ollama is secondary — only available when running locally with the model installed.
-Target latency: <5 seconds via Groq; Ollama as offline-only fallback.
+Online  → Groq (llama-3.1-8b-instant / llama-3.3-70b) — ~1s
+Offline → Ollama gemma4:e2b running locally            — ~15-35s
+
+Internet is tested with a 2-second socket ping before choosing the path.
 """
 import asyncio
 import logging
 import json
 import os
 import re
+import socket
 from typing import Optional
 
 # rag_service imported lazily to avoid sentence_transformers loading at startup
+
+# ── Internet connectivity check ───────────────────────────────────────────────
+
+def _is_online(timeout: float = 2.0) -> bool:
+    """Return True if we can reach the internet (Google DNS on port 53).
+
+    Runs in a thread executor — never blocks the event loop.
+    A 2-second timeout means offline detection adds at most 2s to startup.
+    When the result is False we skip Groq entirely and go straight to Ollama.
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(timeout)
+            s.connect(("8.8.8.8", 53))
+        return True
+    except OSError:
+        return False
 
 logger = logging.getLogger("sahayak.llm")
 
@@ -231,16 +246,25 @@ async def generate_diagnosis(
         additional=additional_context or "None"
     )
 
+    # Step 2b — choose LLM path based on connectivity
+    # Check runs in a thread (2s timeout) so the event loop is never blocked.
+    online = await asyncio.to_thread(_is_online)
+    logger.info("Connectivity: %s", "ONLINE" if online else "OFFLINE — using Gemma4:e2b (Ollama)")
+
     llm_raw = ""
-    try:
-        # Primary: Groq cloud — works on Render and all internet-connected environments
-        llm_raw = await _call_groq_fast(system_prompt, user_prompt)
-    except Exception:
+    if online:
+        # Online path: Groq is fast (~1s) and has no local resource cost
         try:
-            # Secondary: Ollama local — offline-capable, only available when running locally
+            llm_raw = await _call_groq_fast(system_prompt, user_prompt)
+        except Exception as groq_err:
+            logger.warning("Groq unavailable (%s) — falling back to Ollama", groq_err)
+
+    if not llm_raw:
+        # Offline path (or Groq failed): run Gemma4:e2b locally via Ollama
+        try:
             llm_raw = await _call_ollama_fast(system_prompt, user_prompt)
-        except Exception as e:
-            logger.error("All LLM backends failed: %s", e)
+        except Exception as ollama_err:
+            logger.error("Ollama also failed (%s) — using hardcoded fallback", ollama_err)
             llm_raw = (
                 '{"extracted_symptoms": "' + symptoms.replace('"', "'") + '",'
                 '"disease_name": "Clinical Evaluation Required", "confidence_pct": 50}'
