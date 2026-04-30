@@ -459,9 +459,37 @@ export default function Auth() {
                   ) : mode === "login" ? "Sign In" : "Create Account"}
                 </Button>
 
-                <div className="relative flex items-center gap-3 my-2">
+                {/* ── Demo account auto-fill (for judges) ───────────────────── */}
+                {mode === "login" && (
+                  <div className="mt-3 p-3 rounded-xl bg-brand-500/8 border border-brand-500/20">
+                    <p className="text-[11px] text-brand-300/70 font-medium mb-2 uppercase tracking-wide">
+                      🎯 Judge / Demo Account
+                    </p>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs text-gray-400 leading-relaxed">
+                        <span className="text-gray-300 font-mono">{role}@sahayak.ai</span>
+                        <br />
+                        <span className="text-gray-500">Password: </span>
+                        <span className="text-gray-300 font-mono">Sahayak@2025</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const emailField = mode === "login" ? loginForm : regForm
+                          emailField.setValue("email" as never, `${role}@sahayak.ai` as never)
+                          emailField.setValue("password" as never, "Sahayak@2025" as never)
+                        }}
+                        className="shrink-0 text-xs text-brand-400 hover:text-brand-300 border border-brand-500/30 hover:border-brand-400/50 px-2.5 py-1 rounded-lg transition-colors"
+                      >
+                        Auto-fill
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="relative flex items-center gap-3 my-3">
                   <div className="flex-1 h-px bg-gray-700" />
-                  <span className="text-xs text-gray-500">or</span>
+                  <span className="text-xs text-gray-500">or instant demo</span>
                   <div className="flex-1 h-px bg-gray-700" />
                 </div>
                 <button

@@ -28,6 +28,8 @@ dependencies = [
     "pytesseract>=0.3.10",
     "pyttsx3>=2.99",
     "faster-whisper>=1.2.1",
+    "supabase>=2.29.0",
+    "httpx>=0.28.1",
 ]
 
 [project.scripts]

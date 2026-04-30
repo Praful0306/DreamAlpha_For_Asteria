@@ -49,7 +49,8 @@ def _get_client():
 
 
 def supabase_is_configured() -> bool:
-    return _get_client() is not None and _get_client() is not False
+    client = _get_client()
+    return client is not None and client is not False
 
 
 def verify_supabase_token(token: str) -> Optional[dict]:
