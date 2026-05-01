@@ -13,9 +13,10 @@ import { DiagPipeline, type PipelineStep } from "@/components/shared/DiagPipelin
 import { VoiceButton } from "@/components/shared/VoiceButton"
 import { diagnose, tts, type DiagnosisResult } from "@/lib/api"
 import { localDiagnose } from "@/lib/localDiagnose"
+import { ollamaDiagnose } from "@/lib/ollamaDiagnose"
 import { isDemoMode } from "@/lib/demoStore"
 import { useStore } from "@/store/useStore"
-import { AlertCircle, CheckCircle2, Pill, Clock, Users } from "lucide-react"
+import { AlertCircle, CheckCircle2, Pill, Clock, Users, Cpu } from "lucide-react"
 
 const LANG_OPTIONS = [
   { value: "kn", label: "ಕನ್ನಡ (Kannada)" },
@@ -32,9 +33,10 @@ const LANG_OPTIONS = [
 export default function PatientDiagnosis() {
   const { user, lang, setLang } = useStore()
   const [symptoms,  setSymptoms]  = useState("")
-  const [step,      setStep]      = useState<PipelineStep>("idle")
-  const [result,    setResult]    = useState<DiagnosisResult | null>(null)
-  const [speaking,  setSpeaking]  = useState(false)
+  const [step,       setStep]       = useState<PipelineStep>("idle")
+  const [result,     setResult]     = useState<DiagnosisResult | null>(null)
+  const [speaking,   setSpeaking]   = useState(false)
+  const [localModel, setLocalModel] = useState<string | null>(null)
 
   async function handleDiagnose() {
     if (!symptoms.trim()) { toast.error("Please describe your symptoms"); return }
@@ -46,11 +48,11 @@ export default function PatientDiagnosis() {
       setStep("analyze")
 
       let res: DiagnosisResult
+      setLocalModel(null)
 
       if (isDemoMode()) {
-        // Demo / offline: rule-based local engine — no network needed
-        await new Promise((r) => setTimeout(r, 800))
-        res = localDiagnose(symptoms)
+        // Demo mode: Ollama (AMD NPU) → rule-based fallback
+        res = await _runLocalAI(symptoms, "", setLocalModel)
       } else {
         try {
           res = await diagnose({
@@ -60,15 +62,14 @@ export default function PatientDiagnosis() {
             lang,
           })
         } catch (err) {
-          // Backend offline / Render sleeping → fall back to local engine
+          // Backend offline / Render sleeping → Ollama (AMD NPU) → rule-based
           const msg = err instanceof Error ? err.message : ""
           const isOffline = msg.includes("Failed to fetch") || msg.includes("NetworkError") ||
             msg.includes("net::ERR") || msg.includes("timed out") ||
             msg.includes("Backend is starting") || msg.includes("Demo mode")
           if (isOffline) {
-            toast.warning("Backend offline — using local AI diagnosis", { duration: 4000 })
-            await new Promise((r) => setTimeout(r, 600))
-            res = localDiagnose(symptoms)
+            toast.warning("Backend offline — switching to local AI (AMD NPU)", { duration: 4000 })
+            res = await _runLocalAI(symptoms, "", setLocalModel)
           } else {
             throw err
           }
@@ -105,6 +106,7 @@ export default function PatientDiagnosis() {
     setSymptoms("")
     setResult(null)
     setStep("idle")
+    setLocalModel(null)
   }
 
   const isLoading = step !== "idle" && step !== "result"
@@ -187,11 +189,16 @@ export default function PatientDiagnosis() {
                   <CardTitle className="text-lg font-bold text-white">
                     {result.disease_name ?? result.diagnosis ?? "Diagnosis Result"}
                   </CardTitle>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <RiskBadge level={result.risk_level} />
                     {result.confidence_pct != null && (
                       <span className="text-xs text-gray-500 bg-white/5 px-2 py-0.5 rounded-full border border-white/10">
                         {result.confidence_pct}% confidence
+                      </span>
+                    )}
+                    {localModel && (
+                      <span className="text-xs text-purple-300 bg-purple-500/10 border border-purple-500/25 px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <Cpu className="w-3 h-3" /> AMD NPU · {localModel}
                       </span>
                     )}
                   </div>
@@ -304,4 +311,24 @@ export default function PatientDiagnosis() {
       </AnimatePresence>
     </div>
   )
+}
+
+// ── Shared local-AI helper: Ollama (AMD NPU) → rule-based fallback ────────────
+
+async function _runLocalAI(
+  symptoms: string,
+  vitals: string,
+  setModel: (m: string | null) => void,
+): Promise<DiagnosisResult> {
+  try {
+    const res = await ollamaDiagnose(symptoms, vitals)
+    const model = (res as { _model?: string })._model ?? null
+    setModel(model)
+    const { _model: _m, ...clean } = res as typeof res & { _model?: string }
+    return clean
+  } catch {
+    // Ollama unavailable / timeout → rule-based engine always works offline
+    setModel(null)
+    return localDiagnose(symptoms, vitals)
+  }
 }

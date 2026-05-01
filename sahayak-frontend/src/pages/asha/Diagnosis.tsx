@@ -13,9 +13,10 @@ import { DiagPipeline, type PipelineStep } from "@/components/shared/DiagPipelin
 import { VoiceButton } from "@/components/shared/VoiceButton"
 import { diagnose, tts, getMyPatients, generateReferral, type Patient, type DiagnosisResult } from "@/lib/api"
 import { localDiagnose } from "@/lib/localDiagnose"
+import { ollamaDiagnose } from "@/lib/ollamaDiagnose"
 import { useStore } from "@/store/useStore"
 import { useEffect } from "react"
-import { AlertCircle, CheckCircle2, Pill, Clock, Users, FileOutput } from "lucide-react"
+import { AlertCircle, CheckCircle2, Pill, Clock, Users, FileOutput, Cpu } from "lucide-react"
 import { isDemoMode, demoGet } from "@/lib/demoStore"
 
 const LANG_OPTIONS = [
@@ -36,10 +37,11 @@ export default function AshaDiagnosis() {
   const [patientId, setPatientId] = useState<string>("")
   const [symptoms,  setSymptoms]  = useState("")
   const [vitals,    setVitals]    = useState("")
-  const [step,      setStep]      = useState<PipelineStep>("idle")
-  const [result,    setResult]    = useState<DiagnosisResult | null>(null)
-  const [speaking,  setSpeaking]  = useState(false)
-  const [referring, setReferring] = useState(false)
+  const [step,       setStep]       = useState<PipelineStep>("idle")
+  const [result,     setResult]     = useState<DiagnosisResult | null>(null)
+  const [speaking,   setSpeaking]   = useState(false)
+  const [referring,  setReferring]  = useState(false)
+  const [localModel, setLocalModel] = useState<string | null>(null)   // set when Ollama is used
 
   useEffect(() => {
     if (isDemoMode()) {
@@ -62,11 +64,11 @@ export default function AshaDiagnosis() {
       setStep("analyze")
 
       let res: DiagnosisResult
+      setLocalModel(null)
 
       if (isDemoMode()) {
-        // Demo / offline: run local rule-based engine — no network needed
-        await new Promise(r => setTimeout(r, 800))   // brief pause so pipeline looks natural
-        res = localDiagnose(symptoms, vitals)
+        // Demo mode: Ollama (local NPU) → rule-based fallback
+        res = await _runLocalAI(symptoms, vitals, setLocalModel)
       } else {
         try {
           res = await diagnose({
@@ -77,15 +79,13 @@ export default function AshaDiagnosis() {
             lang,
           })
         } catch (err) {
-          // Network / backend offline → fall back to local engine
+          // Backend offline / Render sleeping → Ollama → rule-based
           const msg = err instanceof Error ? err.message : ""
           const isOffline = msg.includes("Failed to fetch") || msg.includes("NetworkError") ||
-            msg.includes("net::ERR") || msg.includes("timed out") ||
-            msg.includes("Backend is starting")
+            msg.includes("net::ERR") || msg.includes("timed out") || msg.includes("Backend is starting")
           if (isOffline) {
-            toast.warning("Backend offline — using local AI diagnosis engine", { duration: 4000 })
-            await new Promise(r => setTimeout(r, 600))
-            res = localDiagnose(symptoms, vitals)
+            toast.warning("Backend offline — switching to local AI (AMD NPU)", { duration: 4000 })
+            res = await _runLocalAI(symptoms, vitals, setLocalModel)
           } else {
             throw err
           }
@@ -238,6 +238,11 @@ export default function AshaDiagnosis() {
                         {result.confidence_pct}% confidence
                       </span>
                     )}
+                    {localModel && (
+                      <span className="text-xs text-purple-300 bg-purple-500/10 border border-purple-500/25 px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <Cpu className="w-3 h-3" /> AMD NPU · {localModel}
+                      </span>
+                    )}
                   </div>
                 </div>
               </CardHeader>
@@ -339,4 +344,25 @@ export default function AshaDiagnosis() {
       </AnimatePresence>
     </div>
   )
+}
+
+// ── Shared local-AI helper (Ollama → rule-based fallback) ─────────────────────
+
+async function _runLocalAI(
+  symptoms: string,
+  vitals: string,
+  setModel: (m: string | null) => void,
+): Promise<import("@/lib/api").DiagnosisResult> {
+  try {
+    const res = await ollamaDiagnose(symptoms, vitals)
+    const model = (res as { _model?: string })._model ?? null
+    setModel(model)
+    const { _model: _m, ...clean } = res as typeof res & { _model?: string }
+    return clean
+  } catch {
+    // Ollama unavailable / timeout → rule-based engine always works
+    const res = localDiagnose(symptoms, vitals)
+    setModel(null)
+    return res
+  }
 }
