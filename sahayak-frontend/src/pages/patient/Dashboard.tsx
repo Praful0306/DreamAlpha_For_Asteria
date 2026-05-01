@@ -17,7 +17,7 @@ import {
   getPatientAppointments, getAshaContact,
   type Patient, type MedicalReport, type PatientAppointment, type AshaContact,
 } from "@/lib/api"
-import { isDemoMode, demoAppointments, demoHealthRecords, onSync, type DemoHealthRecord } from "@/lib/demoStore"
+import { isDemoMode, demoGet, demoAppointments, demoHealthRecords, onSync, type DemoHealthRecord } from "@/lib/demoStore"
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts"
 import { formatDate } from "@/lib/utils"
 import VoiceBookingSession from "./VoiceBookingSession"
@@ -230,15 +230,29 @@ export default function PatientDashboard() {
           id:        parseInt(a.id),
           date:      date ?? todayStr,
           time:      time ?? "10:00",
-          doctor_id: 1,
+          doctor_id: a.doctor_id ?? 1,
           reason:    a.reason || "General consultation",
           status:    a.status,
           is_today:  (date ?? todayStr) === todayStr,
         } as PatientAppointment
       })
       setAppts(demoAppts)
-      setProfile(null)
-      setReports([])
+
+      // Load seeded demo reports so vitals / charts / health score render
+      const demoReports: MedicalReport[] = demoGet<any[]>("patient_reports", []).map((r: any) => ({
+        id: r.id,
+        created_at:   r.created_at,
+        risk_level:   r.risk_level,
+        heart_rate:   r.heart_rate,
+        spo2:         r.spo2,
+        temperature:  r.temperature,
+        bp_systolic:  r.bp_systolic,
+        bp_diastolic: r.bp_diastolic,
+        diagnosis:    r.diagnosis,
+        health_score: r.health_score,
+      } as MedicalReport))
+      setReports(demoReports)
+      setProfile({ health_score: demoReports[0]?.health_score ?? 72, risk_level: demoReports[0]?.risk_level ?? "MEDIUM" } as any)
       setAshaContact(null)
       setLoading(false)
       return

@@ -10,6 +10,15 @@ const BASE = (import.meta.env.VITE_API_URL as string) || "/api"
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function getToken(): string | null {
+  // First check Zustand store for demo mode
+  try {
+    const raw = localStorage.getItem("sahayak-store")
+    if (raw) {
+      const store = JSON.parse(raw)
+      const token = store?.state?.token ?? store?.token
+      if (token === "demo_token") return "demo_token"
+    }
+  } catch {}
   return localStorage.getItem("sahayak_token")
 }
 
@@ -20,12 +29,8 @@ async function request<T>(
   signal?: AbortSignal
 ): Promise<T> {
   const token = getToken()
-  // Block real API calls in demo mode
-  if (token === "demo_token") {
-    throw new Error("Demo mode — create a real account to use this feature.")
-  }
   const headers: Record<string, string> = {}
-  if (token) headers["Authorization"] = `Bearer ${token}`
+  if (token && token !== "demo_token") headers["Authorization"] = `Bearer ${token}`
   if (body !== undefined && !(body instanceof FormData)) {
     headers["Content-Type"] = "application/json"
   }
@@ -63,11 +68,8 @@ const patch = <T>(path: string, body: unknown) => request<T>("PATCH",  path, bod
 
 async function postForm<T>(path: string, formData: FormData): Promise<T> {
   const token = getToken()
-  if (token === "demo_token") {
-    throw new Error("Demo mode — create a real account to use this feature.")
-  }
   const headers: Record<string, string> = {}
-  if (token) headers["Authorization"] = `Bearer ${token}`
+  if (token && token !== "demo_token") headers["Authorization"] = `Bearer ${token}`
   const res = await fetch(`${BASE}${path}`, { method: "POST", headers, body: formData })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
@@ -117,6 +119,8 @@ let _cachedPatientId: number | null = null
  * Throws if it cannot be determined (prevents saving to wrong patient).
  */
 export async function resolvePatientId(user: { id: string | number; patient_id?: number | null }): Promise<number> {
+  if (getToken() === "demo_token") return 1
+  
   // 1. In-memory (fastest — within page session)
   if (_cachedPatientId && _cachedPatientId > 0) return _cachedPatientId
 
@@ -257,8 +261,25 @@ export interface MedicalReport {
   created_at?: string
 }
 
-export const getPatientProfile = (id: number | string) =>
-  get<Patient>(`/patient/${id}`)
+export const getPatientProfile = async (id: number | string) => {
+  if (getToken() === "demo_token") {
+    return {
+      id: Number(id),
+      user_id: 999,
+      name: "Demo Patient",
+      age: 45,
+      gender: "M",
+      village: "Demo Village",
+      district: "Demo District",
+      blood_group: "O+",
+      phone: "9876543210",
+      medical_history: "No prior conditions",
+      health_score: 85,
+      risk_level: "LOW"
+    } as Patient
+  }
+  return get<Patient>(`/patient/${id}`)
+}
 
 export const updateProfile = (id: number | string, data: Partial<Patient>) =>
   post<Patient>(`/patients/${id}/profile`, data)
@@ -408,6 +429,10 @@ export interface SaveReportPayload {
  *  Deliberately omits the Authorization header: patient_id is already resolved
  *  securely by resolvePatientId(). Sending an expired token would cause 401. */
 export const saveReport = async (data: SaveReportPayload): Promise<{ success: boolean; db_id?: number | null }> => {
+  if (getToken() === "demo_token") {
+    // Demo mode: pretend to save successfully
+    return new Promise(resolve => setTimeout(() => resolve({ success: true, db_id: 999 }), 800))
+  }
   const res = await fetch(`${BASE}/reports/save-full`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -424,6 +449,18 @@ export const saveReport = async (data: SaveReportPayload): Promise<{ success: bo
 
 /** Fetch reports and normalize backend field names → frontend field names. */
 export const getReports = async (patientId: number | string): Promise<MedicalReport[]> => {
+  if (getToken() === "demo_token") {
+    return [
+      {
+        id: 1, patient_id: 1,
+        diagnosis: "Routine Checkup",
+        heart_rate: 82, spo2: 98, temperature: 36.6,
+        bp_systolic: 120, bp_diastolic: 80,
+        risk_level: "LOW",
+        created_at: new Date().toISOString()
+      } as MedicalReport
+    ]
+  }
   const raw = await get<MedicalReport[]>(`/patient/${patientId}/reports`)
   return raw.map(r => {
     // Parse bp string "120/80" → bp_systolic / bp_diastolic
@@ -446,14 +483,64 @@ export const getReports = async (patientId: number | string): Promise<MedicalRep
 }
 
 // Auth-level share-code endpoints (no patient ID needed — JWT identifies the user)
-export const getShareCode = (_?: unknown) =>
-  get<{ code: string; active: boolean; expires_at: string | null; patient_id: number }>("/auth/share-code")
 
-export const generateShareCode = (_?: unknown) =>
-  post<{ code: string; active: boolean; expires_at: string | null; message: string }>("/auth/generate-share-code", {})
+export const getShareCode = async () => {
+  if (getToken() === "demo_token") {
+    const raw = localStorage.getItem("demo_share_code")
+    if (raw) return JSON.parse(raw)
+    throw new Error("No code generated yet")
+  }
+  return get<{ code: string; active: boolean; expires_at: string | null; patient_id: number }>("/auth/share-code")
+}
 
-export const revokeShareCode = (_?: unknown) =>
-  post<{ message: string; active: boolean }>("/auth/revoke-share-code", {})
+export const generateShareCode = async () => {
+  if (getToken() === "demo_token") {
+    const code = Math.random().toString(36).substring(2, 10).toUpperCase()
+    const data = { code, active: true, expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), message: "Code generated" }
+    localStorage.setItem("demo_share_code", JSON.stringify(data))
+    return data
+  }
+  return post<{ code: string; active: boolean; expires_at: string | null; message: string }>("/auth/generate-share-code", {})
+}
+
+export const revokeShareCode = async () => {
+  if (getToken() === "demo_token") {
+    const raw = localStorage.getItem("demo_share_code")
+    if (raw) {
+      const data = JSON.parse(raw)
+      data.active = false
+      localStorage.setItem("demo_share_code", JSON.stringify(data))
+    }
+    return { message: "Revoked", active: false }
+  }
+  return post<{ message: string; active: boolean }>("/auth/revoke-share-code", {})
+}
+
+// ── Doctor / Access Patient ──────────────────────────────────────────────────
+
+export interface AccessPatientResult {
+  message?: string
+  access_id: number
+  patient_id: number
+}
+
+export const accessPatient = async (code: string) => {
+  if (getToken() === "demo_token") {
+    const raw = localStorage.getItem("demo_share_code")
+    const cleanCode = code.toUpperCase().trim()
+    if (raw) {
+      const data = JSON.parse(raw)
+      if (data.code === cleanCode && data.active) {
+        return { message: "Access granted", patient_id: 1, access_id: 1 }
+      }
+    }
+    if (cleanCode === "DEMO1234") {
+      return { message: "Access granted", patient_id: 1, access_id: 1 }
+    }
+    throw new Error("Invalid or expired code")
+  }
+  return post<AccessPatientResult>("/doctor/access-patient", { share_code: code.toUpperCase().trim() })
+}
 
 // ── Doctor ────────────────────────────────────────────────────────────────────
 
@@ -461,15 +548,6 @@ export const getDoctorPatients = async (): Promise<Patient[]> => {
   const raw = await get<Array<Patient & { last_risk_level?: string }>>("/doctor/patients")
   return raw.map(p => ({ ...p, risk_level: p.risk_level ?? p.last_risk_level }))
 }
-
-export interface AccessPatientResult {
-  patient_id: number
-  patient_name: string
-  message: string
-}
-
-export const accessPatient = (code: string) =>
-  post<AccessPatientResult>("/doctor/access-patient", { share_code: code.toUpperCase().trim() })
 
 
 // ── ASHA ──────────────────────────────────────────────────────────────────────
@@ -552,7 +630,17 @@ export const transcribe = (audioBlob: Blob, lang = "en") => {
   const fd = new FormData()
   fd.append("file", audioBlob, "audio.webm")
   fd.append("language", lang)
-  return postForm<{ text: string; duration?: number; language?: string }>("/transcribe/", fd)
+  const token = getToken()
+  const headers: Record<string, string> = {}
+  if (token && token !== "demo_token") headers["Authorization"] = `Bearer ${token}`
+
+  return fetch(`${BASE}/transcribe/`, { method: "POST", headers, body: fd }).then(async (res) => {
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(String(err.detail ?? `HTTP ${res.status}`))
+    }
+    return res.json() as Promise<{ text: string; duration?: number; language?: string }>
+  })
 }
 
 // ── Referral ──────────────────────────────────────────────────────────────────

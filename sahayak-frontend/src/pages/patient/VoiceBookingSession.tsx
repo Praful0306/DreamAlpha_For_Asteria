@@ -493,6 +493,42 @@ export default function VoiceBookingSession({ onClose, reason, reasonLabel }: Pr
       speakText(successMsg, curLang)
     } catch (err) {
       console.error("[bookAppt] failed:", err)
+      const msg = err instanceof Error ? err.message : String(err)
+      const isOffline = msg.includes("Failed to fetch") || msg.includes("NetworkError") ||
+        msg.includes("net::ERR") || msg.includes("timed out") || msg.includes("Backend is starting")
+
+      if (isOffline) {
+        // Fallback: save to local store (demoAppointments)
+        const tok = makeToken()
+        demoAppointments.add({
+          patient_name:   ans.name  || (user as any)?.full_name || "Patient",
+          reason:         reasonLabel,
+          preferred_time: `${curDate} ${slot}`,
+          phone:          ans.phone || (user as any)?.phone || "",
+          status:         "pending",
+          booked_by:      "patient",
+          doctor_id:      curDocId,
+        })
+        const r: BookingResult = {
+          token:      tok,
+          name:       ans.name  || (user as any)?.full_name || "Patient",
+          age:        ans.age,
+          phone:      ans.phone || (user as any)?.phone || "",
+          date:       curDate,
+          slot,
+          reason:     reasonLabel,
+          doctorName: curDocName,
+          apptId:     undefined,
+        }
+        setResult(r)
+        setStep("done")
+        const successMsg = PROMPTS[curLang].success(fmt(slot), tok)
+        addMsg("ai", `🎉 ${successMsg}`)
+        speakText(successMsg, curLang)
+        toast.warning("Backend offline. Appointment booked locally (AMD NPU).", { duration: 5000 })
+        return
+      }
+
       toast.error("Could not book appointment. Please try again.")
       lastSpokenRef.current = ""   // reset guard so time question re-asks
       setStep("time")

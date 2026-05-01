@@ -15,7 +15,7 @@ import {
 } from "@/lib/api"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
-import { isDemoMode, demoAppointments, type DemoAppointment } from "@/lib/demoStore"
+import { isDemoMode, demoAppointments, onSync, type DemoAppointment } from "@/lib/demoStore"
 
 /** Convert a DemoAppointment to AppointmentItem shape for rendering */
 function demoToApptItem(a: DemoAppointment): AppointmentItem {
@@ -286,11 +286,28 @@ export default function Appointments() {
     setLoading(true)
     getDoctorAppointments(doctorId, 7)
       .then(setAppts)
-      .catch(() => toast.error("Could not load appointments"))
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err)
+        const isOffline = msg.includes("Failed to fetch") || msg.includes("NetworkError") ||
+          msg.includes("net::ERR") || msg.includes("timed out") || msg.includes("Backend is starting")
+
+        if (isOffline) {
+          toast.warning("Backend offline — showing locally booked appointments.", { duration: 4000 })
+          const offlineAppts = demoAppointments.getAll().map(demoToApptItem)
+          setAppts(offlineAppts)
+        } else {
+          toast.error("Could not load appointments")
+        }
+      })
       .finally(() => setLoading(false))
   }, [doctorId])
 
-  useEffect(() => { fetchAppts() }, [fetchAppts])
+  useEffect(() => {
+    fetchAppts()
+    // In demo mode, subscribe to cross-store sync so patient bookings appear instantly
+    const unsub = isDemoMode() ? onSync(fetchAppts) : undefined
+    return () => unsub?.()
+  }, [fetchAppts])
 
   const todayAppts     = appts.filter(a => a.is_today)
   const upcomingAppts  = appts.filter(a => !a.is_today)

@@ -272,8 +272,7 @@ export default function DoctorDashboard() {
     if (isDemoMode()) {
       const todayStr = new Date().toISOString().slice(0, 10)
       const allAppts = demoAppointments.getAll()
-      const todayItems: AppointmentItem[] = allAppts
-        .filter(a => a.preferred_time.startsWith(todayStr))
+      const allItems: AppointmentItem[] = allAppts
         .map(a => {
           const [date, time] = a.preferred_time.split(" ")
           return {
@@ -283,11 +282,12 @@ export default function DoctorDashboard() {
             time:         time ?? "10:00",
             status:       a.status === "pending" ? "booked" : a.status,
             reason:       a.reason,
-            is_today:     true,
+            is_today:     (date ?? todayStr) === todayStr,
             is_manual:    false,
           } as AppointmentItem
         })
-      setTodayAppts(todayItems)
+      // Show today's appointments in the "Today's Appointments" section
+      setTodayAppts(allItems.filter(a => a.is_today))
       // Show demo patients from ASHA patients store if any, otherwise empty
       const demoPatients = demoGet<Patient[]>("asha_patients", [])
       setPatients(demoPatients)
@@ -305,7 +305,30 @@ export default function DoctorDashboard() {
     const prom2 = doctorId
       ? getDoctorAppointments(doctorId, 1)
           .then(a => setTodayAppts(a.filter(x => x.is_today)))
-          .catch(() => {})
+          .catch((err) => {
+            const msg = err instanceof Error ? err.message : String(err)
+            const isOffline = msg.includes("Failed to fetch") || msg.includes("NetworkError") ||
+              msg.includes("net::ERR") || msg.includes("timed out") || msg.includes("Backend is starting")
+            if (isOffline) {
+              const todayStr = new Date().toISOString().slice(0, 10)
+              const todayItems: AppointmentItem[] = demoAppointments.getAll()
+                .filter(a => a.preferred_time.startsWith(todayStr))
+                .map(a => {
+                  const [date, time] = a.preferred_time.split(" ")
+                  return {
+                    id:           parseInt(a.id),
+                    patient_name: a.patient_name,
+                    date:         date ?? todayStr,
+                    time:         time ?? "10:00",
+                    status:       a.status === "pending" ? "booked" : a.status,
+                    reason:       a.reason,
+                    is_today:     true,
+                    is_manual:    false,
+                  } as AppointmentItem
+                })
+              setTodayAppts(todayItems)
+            }
+          })
       : Promise.resolve()
     Promise.all([prom1, prom2]).finally(() => setLoading(false))
   }, [doctorId])
@@ -315,7 +338,13 @@ export default function DoctorDashboard() {
     const onFocus = () => fetchData()
     window.addEventListener("focus", onFocus)
     const interval = setInterval(fetchData, 30_000)
-    return () => { window.removeEventListener("focus", onFocus); clearInterval(interval) }
+    // In demo mode, subscribe to cross-store sync so patient bookings appear instantly
+    const unsub = isDemoMode() ? onSync(fetchData) : undefined
+    return () => {
+      window.removeEventListener("focus", onFocus)
+      clearInterval(interval)
+      unsub?.()
+    }
   }, [fetchData])
 
   // Demo mode: load health records and subscribe to live updates from ASHA calls

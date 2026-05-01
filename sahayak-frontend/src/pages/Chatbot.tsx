@@ -1,10 +1,25 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { Send, Loader2, Volume2, VolumeX, Bot, User as UserIcon, Mic } from "lucide-react"
+import { Send, Loader2, Volume2, VolumeX, Bot, User as UserIcon, Mic, Cpu } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { VoiceButton } from "@/components/shared/VoiceButton"
+
+const LANG_OPTIONS = [
+  { value: "en", label: "English" },
+  { value: "hi", label: "हिंदी (Hindi)" },
+  { value: "kn", label: "ಕನ್ನಡ (Kannada)" },
+  { value: "te", label: "తెలుగు (Telugu)" },
+  { value: "ta", label: "தமிழ் (Tamil)" },
+  { value: "mr", label: "मराठी (Marathi)" },
+  { value: "bn", label: "বাংলা (Bengali)" },
+  { value: "gu", label: "ગુજરાતી (Gujarati)" },
+  { value: "pa", label: "ਪੰਜਾਬੀ (Punjabi)" },
+]
 import { chat, type ChatMessage } from "@/lib/api"
+import { ollamaChat } from "@/lib/ollamaDiagnose"
+import { isDemoMode } from "@/lib/demoStore"
 import { useStore } from "@/store/useStore"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
@@ -12,49 +27,55 @@ import { toast } from "sonner"
 /* ── Voice gender picker ─────────────────────────────────────────────────── */
 type VoiceGender = "female" | "male"
 
-function pickVoice(gender: VoiceGender): SpeechSynthesisVoice | null {
+function pickVoice(gender: VoiceGender, lang: string): SpeechSynthesisVoice | null {
   const voices = window.speechSynthesis.getVoices()
   if (!voices.length) return null
 
-  // Priority lists — most natural/human-like first
-  const femalePriority = [
-    "Google UK English Female",
-    "Microsoft Aria Online (Natural) - English (United States)",
-    "Microsoft Zira - English (United States)",
-    "Samantha",
-    "Karen",
-    "Moira",
-    "Tessa",
-    "Fiona",
-  ]
-  const malePriority = [
-    "Google UK English Male",
-    "Microsoft Guy Online (Natural) - English (United States)",
-    "Microsoft David - English (United States)",
-    "Daniel",
-    "Alex",
-    "Fred",
-    "Ralph",
-  ]
+  const langPrefix = lang.toLowerCase().slice(0, 2)
+  const langVoices = voices.filter(v => v.lang.toLowerCase().startsWith(langPrefix))
+  const targetVoices = langVoices.length > 0 ? langVoices : voices
 
-  const priority = gender === "female" ? femalePriority : malePriority
+  // Priority lists — most natural/human-like first for English
+  if (langPrefix === "en") {
+    const femalePriority = [
+      "Google UK English Female",
+      "Microsoft Aria Online (Natural) - English (United States)",
+      "Microsoft Zira - English (United States)",
+      "Samantha",
+      "Karen",
+      "Moira",
+      "Tessa",
+      "Fiona",
+    ]
+    const malePriority = [
+      "Google UK English Male",
+      "Microsoft Guy Online (Natural) - English (United States)",
+      "Microsoft David - English (United States)",
+      "Daniel",
+      "Alex",
+      "Fred",
+      "Ralph",
+    ]
 
-  for (const name of priority) {
-    const v = voices.find(v => v.name === name)
-    if (v) return v
+    const priority = gender === "female" ? femalePriority : malePriority
+
+    for (const name of priority) {
+      const v = targetVoices.find(v => v.name === name)
+      if (v) return v
+    }
   }
 
   // Fallback: any voice matching gender keyword
   const keyword = gender === "female" ? /female|woman|girl/i : /male|man|guy/i
-  const fallback = voices.find(v => keyword.test(v.name))
+  const fallback = targetVoices.find(v => keyword.test(v.name))
   if (fallback) return fallback
 
-  // Last resort: first English voice
-  return voices.find(v => v.lang.startsWith("en")) ?? voices[0]
+  // Last resort
+  return targetVoices[0] ?? voices[0]
 }
 
 /* ── Speak function using Web Speech API ─────────────────────────────────── */
-function speakText(text: string, gender: VoiceGender, onEnd: () => void): () => void {
+function speakText(text: string, gender: VoiceGender, lang: string, onEnd: () => void): () => void {
   window.speechSynthesis.cancel()
 
   // Strip markdown before speaking
@@ -70,8 +91,9 @@ function speakText(text: string, gender: VoiceGender, onEnd: () => void): () => 
   utter.pitch = gender === "female" ? 1.1 : 0.9
   utter.volume = 1
 
-  const voice = pickVoice(gender)
+  const voice = pickVoice(gender, lang)
   if (voice) utter.voice = voice
+  utter.lang = voice ? voice.lang : lang
 
   utter.onend = onEnd
   utter.onerror = onEnd
@@ -200,14 +222,15 @@ const QUICK_PROMPTS: Record<string, string[]> = {
 
 /* ── Main component ──────────────────────────────────────────────────────── */
 export default function Chatbot() {
-  const { user, lang } = useStore()
+  const { user, lang, setLang } = useStore()
   const [messages, setMessages] = useState<ChatMessage[]>([
     { role: "assistant", content: `Namaste${user?.full_name || user?.name ? `, ${(user?.full_name || user?.name || "").split(" ")[0]}` : ""}! I'm Sahayak AI. Ask me anything about health, symptoms or medications. How can I help you today?` }
   ])
-  const [input,    setInput]    = useState("")
-  const [loading,  setLoading]  = useState(false)
-  const [speaking, setSpeaking] = useState<number | null>(null)
-  const [gender,   setGender]   = useState<VoiceGender>("female")
+  const [input,       setInput]       = useState("")
+  const [loading,     setLoading]     = useState(false)
+  const [speaking,    setSpeaking]    = useState<number | null>(null)
+  const [gender,      setGender]      = useState<VoiceGender>("female")
+  const [localModel,  setLocalModel]  = useState<string | null>(null)
   const bottomRef  = useRef<HTMLDivElement>(null)
   const stopRef    = useRef<(() => void) | null>(null)
 
@@ -236,8 +259,36 @@ export default function Chatbot() {
     setInput("")
     setLoading(true)
     try {
-      const res = await chat([...messages, userMsg], role, lang)
+      let res: { response: string }
+      let currentModel: string | null = null
+
+      if (isDemoMode()) {
+        const { response, _model } = await ollamaChat([...messages, userMsg], role, lang)
+        res = { response }
+        currentModel = _model
+      } else {
+        try {
+          res = await chat([...messages, userMsg], role, lang)
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : ""
+          const isOffline = msg.includes("Failed to fetch") || msg.includes("NetworkError") ||
+            msg.includes("net::ERR") || msg.includes("timed out") ||
+            msg.includes("Backend is starting") || msg.includes("Demo mode")
+          if (isOffline) {
+            toast.warning("Backend offline — switching to local AI (AMD NPU)", { duration: 4000 })
+            const localRes = await ollamaChat([...messages, userMsg], role, lang)
+            res = { response: localRes.response }
+            currentModel = localRes._model
+          } else {
+            throw err
+          }
+        }
+      }
+
       setMessages(m => [...m, { role: "assistant", content: res.response }])
+      if (currentModel) {
+        setLocalModel(currentModel)
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Chat error")
     } finally {
@@ -252,7 +303,7 @@ export default function Chatbot() {
       if (speaking === index) { setSpeaking(null); return }
     }
     setSpeaking(index)
-    stopRef.current = speakText(content, gender, () => setSpeaking(null))
+    stopRef.current = speakText(content, gender, lang, () => setSpeaking(null))
   }
 
   return (
@@ -265,8 +316,32 @@ export default function Chatbot() {
         </div>
         <div className="flex-1 min-w-0">
           <h2 className="text-base font-bold text-white">Health Chat</h2>
-          <p className="text-xs text-gray-500">LLaMA 3.1 70B · ICMR Knowledge Base</p>
+          <p className="text-xs text-gray-500 flex flex-wrap gap-2 items-center">
+            {localModel ? (
+              <span className="text-purple-400 flex items-center gap-1 bg-purple-500/10 px-1.5 py-0.5 rounded">
+                <Cpu className="w-3 h-3" /> AMD NPU · {localModel}
+              </span>
+            ) : (
+              <span>LLaMA 3.1 70B</span>
+            )}
+            <span>· ICMR Knowledge Base</span>
+          </p>
         </div>
+        
+        {/* Language selector */}
+        <Select value={lang} onValueChange={(v) => { setLang(v); window.speechSynthesis.cancel(); setSpeaking(null) }}>
+          <SelectTrigger className="w-[140px] h-8 bg-white/5 border-white/10 text-white text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="bg-[#1a1a22] border-[#2a2a35]">
+            {LANG_OPTIONS.map(l => (
+              <SelectItem key={l.value} value={l.value} className="text-white focus:bg-white/10 text-xs">
+                {l.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
         {/* Voice selector */}
         <VoiceToggle gender={gender} onChange={g => { setGender(g); window.speechSynthesis.cancel(); setSpeaking(null) }} />
         <div className="flex items-center gap-1.5">

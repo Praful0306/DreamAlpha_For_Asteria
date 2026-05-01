@@ -11,7 +11,8 @@ import { Separator } from "@/components/ui/separator"
 import { RiskBadge } from "@/components/shared/RiskBadge"
 import { DiagPipeline, type PipelineStep } from "@/components/shared/DiagPipeline"
 import { VoiceButton } from "@/components/shared/VoiceButton"
-import { diagnose, tts, type DiagnosisResult } from "@/lib/api"
+import { diagnose, type DiagnosisResult } from "@/lib/api"
+import { speakText, stopSpeaking } from "@/lib/browserTts"
 import { localDiagnose } from "@/lib/localDiagnose"
 import { ollamaDiagnose } from "@/lib/ollamaDiagnose"
 import { isDemoMode } from "@/lib/demoStore"
@@ -52,7 +53,7 @@ export default function PatientDiagnosis() {
 
       if (isDemoMode()) {
         // Demo mode: Ollama (AMD NPU) → rule-based fallback
-        res = await _runLocalAI(symptoms, "", setLocalModel)
+        res = await _runLocalAI(symptoms, "", lang, setLocalModel)
       } else {
         try {
           res = await diagnose({
@@ -69,7 +70,7 @@ export default function PatientDiagnosis() {
             msg.includes("Backend is starting") || msg.includes("Demo mode")
           if (isOffline) {
             toast.warning("Backend offline — switching to local AI (AMD NPU)", { duration: 4000 })
-            res = await _runLocalAI(symptoms, "", setLocalModel)
+            res = await _runLocalAI(symptoms, "", lang, setLocalModel)
           } else {
             throw err
           }
@@ -85,21 +86,11 @@ export default function PatientDiagnosis() {
     }
   }
 
-  async function handleSpeak() {
+  function handleSpeak() {
     if (!result?.clinical_summary) return
+    if (speaking) { stopSpeaking(); setSpeaking(false); return }
     setSpeaking(true)
-    try {
-      const BACKEND = (import.meta.env.VITE_API_URL as string) || ""
-      const res = await tts(result.clinical_summary, lang)
-      const url = `${BACKEND}/${res.file_path.replace(/\\/g, "/")}`
-      const audio = new Audio(url)
-      audio.onended = () => setSpeaking(false)
-      audio.onerror = () => setSpeaking(false)
-      audio.play()
-    } catch {
-      setSpeaking(false)
-      toast.error("Text-to-speech failed")
-    }
+    speakText(result.clinical_summary, lang, () => setSpeaking(false))
   }
 
   function reset() {
@@ -318,10 +309,11 @@ export default function PatientDiagnosis() {
 async function _runLocalAI(
   symptoms: string,
   vitals: string,
+  lang: string,
   setModel: (m: string | null) => void,
 ): Promise<DiagnosisResult> {
   try {
-    const res = await ollamaDiagnose(symptoms, vitals)
+    const res   = await ollamaDiagnose(symptoms, vitals, lang)
     const model = (res as { _model?: string })._model ?? null
     setModel(model)
     const { _model: _m, ...clean } = res as typeof res & { _model?: string }

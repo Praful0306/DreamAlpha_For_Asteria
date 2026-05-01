@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { motion, AnimatePresence } from "framer-motion"
 import { useForm } from "react-hook-form"
@@ -7,14 +7,14 @@ import { z } from "zod"
 import { toast } from "sonner"
 import {
   Users, Stethoscope, Heart, Mic, Brain, Shield,
-  ArrowLeft, Loader2, Eye, EyeOff, Zap
+  ArrowLeft, Loader2, Eye, EyeOff, Zap, Mail
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
-import { signInWithGoogle, signInWithEmail, signUpWithEmail, storeSession } from "@/lib/auth"
-import { supabaseLogin } from "@/lib/api"
+import { storeSession } from "@/lib/auth"
+import { emailLogin, registerUser } from "@/lib/api"
 import { useStore } from "@/store/useStore"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -53,11 +53,19 @@ const ROLES = [
 ]
 
 const loginSchema = z.object({
-  email:    z.string().email("Invalid email"),
+  email:    z.string().email("Invalid email").refine(
+    (e) => e.trim().toLowerCase().endsWith("@gmail.com"),
+    "Only @gmail.com emails are allowed"
+  ),
   password: z.string().min(6, "Min 6 characters"),
 })
 
-const registerSchema = loginSchema.extend({
+const registerSchema = z.object({
+  email:    z.string().email("Invalid email").refine(
+    (e) => e.trim().toLowerCase().endsWith("@gmail.com"),
+    "Only @gmail.com emails are allowed"
+  ),
+  password: z.string().min(6, "Min 6 characters"),
   name:         z.string().min(2, "Min 2 characters"),
   phone:        z.string().optional(),
   district:     z.string().optional(),
@@ -99,74 +107,78 @@ export default function Auth() {
     setMode("login")
   }
 
-  // ── Helper: exchange Supabase token for our backend JWT ─────────────────
-  async function exchangeToken(accessToken: string, userName: string) {
-    const res = await supabaseLogin(accessToken, role!)
-    const displayName = res.full_name ?? res.name ?? userName ?? "User"
-    storeSession(res.access_token, res.role, { name: displayName, id: res.user_id })
-    setAuth({ id: res.user_id, patient_id: res.patient_id ?? null, name: displayName, role: res.role as Role }, res.access_token)
-    toast.success(`Welcome, ${displayName}!`)
-    navigate(ROLE_ROUTES[res.role as Role], { replace: true })
-  }
-
-  // ── Google login ─────────────────────────────────────────────────────────
-  async function handleGoogle() {
-    if (!role) return
-    // Supabase Google OAuth redirects — handled in callback
-    try {
-      await signInWithGoogle()
-      // Redirect happens automatically; store role for callback to use
-      sessionStorage.setItem("sahayak_pending_role", role)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Google login failed")
-    }
-  }
-
-  // ── Email login ──────────────────────────────────────────────────────────
+  // ── Email login (simple — any @gmail.com works) ─────────────────────────
   async function handleLogin(data: LoginForm) {
     if (!role) return
     setLoading(true)
     try {
-      const sbData = await signInWithEmail(data.email, data.password)
-      if (!sbData.session) throw new Error("Login failed — no session returned")
-      await exchangeToken(sbData.session.access_token, sbData.user?.user_metadata?.full_name ?? "")
+      // Try login first
+      const res = await emailLogin(data.email, data.password)
+      const displayName = res.full_name ?? res.name ?? data.email.split("@")[0]
+      storeSession(res.access_token, res.role, { name: displayName, id: res.user_id })
+      setAuth(
+        { id: res.user_id, name: displayName, email: data.email, role: res.role as Role, patient_id: res.patient_id ?? null },
+        res.access_token
+      )
+      toast.success(`Welcome, ${displayName}!`)
+      navigate(ROLE_ROUTES[res.role as Role], { replace: true })
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Login failed"
-      // Detect unconfirmed email
-      if (msg.toLowerCase().includes("email not confirmed") || msg.toLowerCase().includes("invalid login")) {
-        toast.error("Please confirm your email first — check your inbox for the verification link.", { duration: 6000 })
+      // Auto-register if login fails due to invalid credentials
+      if (err instanceof Error && (err.message.includes("Invalid email or password") || err.message.includes("401"))) {
+        try {
+          const res = await registerUser({
+            name: data.email.split("@")[0],
+            email: data.email,
+            password: data.password,
+            role: role,
+            specialization: "",
+            district: "Unknown",
+            phone: "",
+          })
+          const displayName = res.full_name ?? res.name ?? data.email.split("@")[0]
+          storeSession(res.access_token, res.role, { name: displayName, id: res.user_id })
+          setAuth(
+            { id: res.user_id, name: displayName, email: data.email, role: res.role as Role, patient_id: res.patient_id ?? null },
+            res.access_token
+          )
+          toast.success(`Account created automatically! Welcome, ${displayName}!`)
+          navigate(ROLE_ROUTES[res.role as Role], { replace: true })
+        } catch (regErr) {
+          toast.error(regErr instanceof Error ? regErr.message : "Auto-registration failed")
+        }
       } else {
-        toast.error(msg)
+        toast.error(err instanceof Error ? err.message : "Login failed")
       }
     } finally {
       setLoading(false)
     }
   }
 
-  // ── Email register ───────────────────────────────────────────────────────
+  // ── Email register (simple — any @gmail.com works) ──────────────────────
   async function handleRegister(data: RegisterForm) {
     if (!role) return
     setLoading(true)
     try {
-      const sbData = await signUpWithEmail(data.email, data.password, data.name)
-      if (!sbData.session) {
-        // Supabase email confirmation enabled — tell user to check email
-        toast.info(
-          "Account created! Check your inbox for a confirmation email and click the link, then come back to sign in.",
-          { duration: 8000 }
-        )
-        setMode("login")
-        return
-      }
-      await exchangeToken(sbData.session.access_token, data.name)
+      // Call backend register
+      const res = await registerUser({
+        name: data.name,
+        email: data.email,
+        password: data.password,
+        role: role,
+        specialization: data.specialization,
+        district: data.district,
+        phone: data.phone,
+      })
+      const displayName = res.full_name ?? res.name ?? data.name
+      storeSession(res.access_token, res.role, { name: displayName, id: res.user_id })
+      setAuth(
+        { id: res.user_id, name: displayName, email: data.email, role: res.role as Role, patient_id: res.patient_id ?? null },
+        res.access_token
+      )
+      toast.success(`Account created! Welcome, ${displayName}!`)
+      navigate(ROLE_ROUTES[res.role as Role], { replace: true })
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Registration failed"
-      if (msg.toLowerCase().includes("already registered") || msg.toLowerCase().includes("already exists")) {
-        toast.error("This email is already registered. Please sign in instead.")
-        setMode("login")
-      } else {
-        toast.error(msg)
-      }
+      toast.error(err instanceof Error ? err.message : "Registration failed")
     } finally {
       setLoading(false)
     }
@@ -318,31 +330,14 @@ export default function Auth() {
                 <h1 className="text-3xl font-bold text-white mb-1">
                   {mode === "login" ? "Welcome Back" : "Create Account"}
                 </h1>
-                <p className="text-gray-400 mb-8">
+                <p className="text-gray-400 mb-2">
                   {mode === "login" ? "Sign in to your account" : "Get started in minutes"}
                 </p>
 
-                {/* Google button */}
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full mb-4 border-white/15 hover:bg-white/5 text-white h-11 gap-2"
-                  onClick={handleGoogle}
-                  disabled={loading}
-                >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24">
-                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-                  </svg>
-                  Continue with Google
-                </Button>
-
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="flex-1 h-px bg-white/10" />
-                  <span className="text-xs text-gray-600">or with email</span>
-                  <div className="flex-1 h-px bg-white/10" />
+                {/* Gmail notice */}
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/10 border border-blue-500/20 mb-6">
+                  <Mail className="w-4 h-4 text-blue-400 shrink-0" />
+                  <p className="text-xs text-blue-300">Use any <span className="font-semibold">@gmail.com</span> email to sign in instantly</p>
                 </div>
 
                 {/* Register extra fields */}
@@ -362,11 +357,11 @@ export default function Auth() {
                       )}
                     </div>
 
-                    {/* Phone — mandatory for all roles */}
+                    {/* Phone — optional */}
                     <div>
                       <Label htmlFor="phone" className="text-gray-300 text-sm mb-1.5 block">
-                        Mobile Number *
-                        <span className="text-gray-600 font-normal ml-1.5">(for SMS health alerts)</span>
+                        Mobile Number
+                        <span className="text-gray-600 font-normal ml-1.5">(optional)</span>
                       </Label>
                       <div className="flex gap-2">
                         <span className="flex items-center px-3 bg-white/5 border border-white/15 rounded-lg text-gray-400 text-sm whitespace-nowrap">🇮🇳 +91</span>
@@ -414,7 +409,7 @@ export default function Auth() {
                   <Input
                     id="email"
                     type="email"
-                    placeholder="you@example.com"
+                    placeholder="you@gmail.com"
                     className="bg-white/5 border-white/15 text-white placeholder:text-gray-600 h-11"
                     {...(mode === "login" ? loginForm.register("email") : regForm.register("email"))}
                   />
@@ -459,25 +454,24 @@ export default function Auth() {
                   ) : mode === "login" ? "Sign In" : "Create Account"}
                 </Button>
 
-                {/* ── Demo account auto-fill (for judges) ───────────────────── */}
+                {/* ── Quick login for each role ───────────────────── */}
                 {mode === "login" && (
                   <div className="mt-3 p-3 rounded-xl bg-brand-500/8 border border-brand-500/20">
                     <p className="text-[11px] text-brand-300/70 font-medium mb-2 uppercase tracking-wide">
-                      🎯 Judge / Demo Account
+                      🎯 Quick Login
                     </p>
                     <div className="flex items-center justify-between gap-2">
                       <div className="text-xs text-gray-400 leading-relaxed">
-                        <span className="text-gray-300 font-mono">{role}@sahayak.ai</span>
+                        <span className="text-gray-300 font-mono">{role}@gmail.com</span>
                         <br />
                         <span className="text-gray-500">Password: </span>
-                        <span className="text-gray-300 font-mono">Sahayak@2025</span>
+                        <span className="text-gray-300 font-mono">123456</span>
                       </div>
                       <button
                         type="button"
                         onClick={() => {
-                          const emailField = mode === "login" ? loginForm : regForm
-                          emailField.setValue("email" as never, `${role}@sahayak.ai` as never)
-                          emailField.setValue("password" as never, "Sahayak@2025" as never)
+                          loginForm.setValue("email", `${role}@gmail.com`)
+                          loginForm.setValue("password", "123456")
                         }}
                         className="shrink-0 text-xs text-brand-400 hover:text-brand-300 border border-brand-500/30 hover:border-brand-400/50 px-2.5 py-1 rounded-lg transition-colors"
                       >

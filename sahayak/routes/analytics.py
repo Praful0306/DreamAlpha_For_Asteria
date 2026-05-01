@@ -112,7 +112,44 @@ async def get_stats(
                 DiagnosisLog.created_at >= week_ago,
             ).count()
 
-        return {"total_patients": total, "high_risk_7days": high}
+        # Calculate disease distribution and district heatmap
+        disease_distribution = {}
+        district_heatmap = []
+        
+        # Query DiagnosisLogs from the last 30 days
+        month_ago = datetime.utcnow() - timedelta(days=30)
+        
+        # We use all recent diagnoses for the heatmap/distribution
+        # or scoped if we want to restrict it
+        # Actually, disease maps are usually regional, let's just show all for demo
+        recent_diagnoses = db.query(DiagnosisLog).filter(
+            DiagnosisLog.created_at >= month_ago
+        ).all()
+
+        from collections import defaultdict
+        dist_disease_count = defaultdict(lambda: defaultdict(int))
+        
+        for diag in recent_diagnoses:
+            disease = diag.disease_name or "Unknown"
+            disease_distribution[disease] = disease_distribution.get(disease, 0) + 1
+            
+            district = diag.district or "Unknown"
+            dist_disease_count[district][disease] += 1
+            
+        for dist, diseases in dist_disease_count.items():
+            for disease, count in diseases.items():
+                district_heatmap.append({
+                    "district": dist,
+                    "disease": disease,
+                    "count": count
+                })
+
+        return {
+            "total_patients": total, 
+            "high_risk_7days": high,
+            "disease_distribution": disease_distribution,
+            "district_heatmap": district_heatmap
+        }
 
     except Exception as e:
         logger.warning(f"Stats query failed: {e}")

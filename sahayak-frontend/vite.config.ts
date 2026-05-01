@@ -8,6 +8,11 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    // @huggingface/transformers uses dynamic WASM imports that Vite's bundler
+    // can't pre-process — exclude it so it loads directly from node_modules.
+    optimizeDeps: {
+      exclude: ["@huggingface/transformers"],
+    },
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),
@@ -35,13 +40,13 @@ export default defineConfig(({ mode }) => {
         },
         // ── Backend API ────────────────────────────────────────────────────────
         "/api": {
-          target: "http://localhost:8001",
+          target: "http://localhost:8000",
           changeOrigin: true,
           rewrite: (p) => p.replace(/^\/api/, ""),
         },
         // ── Static audio files (TTS output) ───────────────────────────────────
         "/static": {
-          target: "http://localhost:8001",
+          target: "http://localhost:8000",
           changeOrigin: true,
         },
       },

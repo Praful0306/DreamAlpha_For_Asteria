@@ -16,6 +16,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/patient/vitals":       "Vitals Analysis",
   "/patient/access":       "Doctor Access",
   "/patient/call":         "Call Centre",
+  "/patient/watch":        "Watch Sync",
   "/patient/chat":         "Health Chat",
   "/doctor":               "Dashboard",
   "/doctor/access":        "Access Patient",

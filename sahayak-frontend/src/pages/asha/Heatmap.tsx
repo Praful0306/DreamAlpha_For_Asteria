@@ -19,7 +19,13 @@ const DISEASE_COLORS: Record<string, string> = {
   tuberculosis:"bg-red-500/20 text-red-400 border-red-500/30",
   pneumonia:  "bg-blue-500/20 text-blue-400 border-blue-500/30",
   anaemia:    "bg-pink-500/20 text-pink-400 border-pink-500/30",
+  anemia:     "bg-pink-500/20 text-pink-400 border-pink-500/30",
   diabetes:   "bg-purple-500/20 text-purple-400 border-purple-500/30",
+  hypertension: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
+  asthma:     "bg-cyan-500/20 text-cyan-400 border-cyan-500/30",
+  typhoid:    "bg-amber-500/20 text-amber-400 border-amber-500/30",
+  cholera:    "bg-teal-500/20 text-teal-400 border-teal-500/30",
+  malnutrition: "bg-lime-500/20 text-lime-400 border-lime-500/30",
 }
 
 function getColor(disease: string) {
@@ -53,14 +59,18 @@ function HeatCell({ entry, max }: { entry: HeatmapEntry; max: number }) {
 }
 
 const SAMPLE_HEATMAP: HeatmapEntry[] = [
-  { district: "Varanasi",   count: 12, disease: "Malaria" },
-  { district: "Allahabad",  count: 8,  disease: "Dengue" },
-  { district: "Lucknow",    count: 15, disease: "Tuberculosis" },
-  { district: "Agra",       count: 5,  disease: "Pneumonia" },
-  { district: "Kanpur",     count: 9,  disease: "Anaemia" },
-  { district: "Gorakhpur",  count: 11, disease: "Malaria" },
-  { district: "Bareilly",   count: 4,  disease: "Diabetes" },
-  { district: "Jhansi",     count: 7,  disease: "Dengue" },
+  { district: "Varanasi",   count: 24, disease: "Malaria" },
+  { district: "Lucknow",    count: 31, disease: "Tuberculosis" },
+  { district: "Gorakhpur",  count: 28, disease: "Malaria" },
+  { district: "Kanpur",     count: 19, disease: "Anaemia" },
+  { district: "Allahabad",  count: 17, disease: "Dengue" },
+  { district: "Agra",       count: 14, disease: "Pneumonia" },
+  { district: "Meerut",     count: 12, disease: "Asthma" },
+  { district: "Jhansi",     count: 11, disease: "Dengue" },
+  { district: "Bareilly",   count: 9,  disease: "Diabetes" },
+  { district: "Aligarh",    count: 8,  disease: "Typhoid" },
+  { district: "Moradabad",  count: 6,  disease: "Cholera" },
+  { district: "Saharanpur", count: 5,  disease: "Malnutrition" },
 ]
 
 export default function Heatmap() {

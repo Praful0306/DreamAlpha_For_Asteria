@@ -5,6 +5,7 @@ import { Toaster } from "sonner"
 import { AnimatePresence } from "framer-motion"
 import { useStore } from "@/store/useStore"
 import AppLayout from "@/components/layout/AppLayout"
+import SyncManager from "@/components/shared/SyncManager"
 
 // ── Lazy pages ────────────────────────────────────────────────────────────────
 const Landing      = lazy(() => import("@/pages/Landing"))
@@ -19,6 +20,7 @@ const PatientRep     = lazy(() => import("@/pages/patient/Reports"))
 const DoctorAccess   = lazy(() => import("@/pages/patient/DoctorAccess"))
 const PatientProfile = lazy(() => import("@/pages/patient/Profile"))
 const CallCenter     = lazy(() => import("@/pages/patient/CallCenter"))
+const WatchSync      = lazy(() => import("@/pages/patient/WatchSync"))
 
 // Doctor
 const DoctorDash    = lazy(() => import("@/pages/doctor/Dashboard"))
@@ -71,6 +73,7 @@ export default function App() {
 
   return (
     <BrowserRouter>
+      <SyncManager />
       <Suspense fallback={<PageLoader />}>
         <AnimatePresence mode="wait">
           <Routes>
@@ -90,6 +93,7 @@ export default function App() {
               <Route path="chat"     element={<Chatbot />} />
               <Route path="call"     element={<CallCenter />} />
               <Route path="profile"  element={<PatientProfile />} />
+              <Route path="watch"    element={<WatchSync />} />
             </Route>
 
             {/* Doctor */}

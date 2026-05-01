@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion"
 import {
   LayoutDashboard, Mic, Upload, FileText, Share2,
   Users, Activity, Map, CheckSquare, Bell, Baby,
-  Syringe, ClipboardList, MessageSquare,
+  Syringe, ClipboardList, MessageSquare, Watch,
   HeartPulse, LogOut, ChevronLeft, ChevronRight, Phone,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -20,6 +20,7 @@ const NAV: Record<string, { label: string; icon: React.ElementType; href: string
     { label: "Vitals",       icon: HeartPulse,      href: "/patient/vitals" },
     { label: "Share",        icon: Share2,          href: "/patient/access" },
     { label: "Call Centre",  icon: Phone,           href: "/patient/call" },
+    { label: "Watch Sync",   icon: Watch,           href: "/patient/watch" },
     { label: "Chat",         icon: MessageSquare,   href: "/patient/chat" },
   ],
   doctor: [

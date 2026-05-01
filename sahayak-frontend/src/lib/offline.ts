@@ -14,12 +14,15 @@ interface QueuedRequest {
 }
 
 let dbPromise: Promise<IDBPDatabase> | null = null
+const DB_VERSION = 2
 
 function getDB() {
   if (!dbPromise) {
-    dbPromise = openDB("sahayak-offline", 1, {
+    dbPromise = openDB("sahayak-offline", DB_VERSION, {
       upgrade(db) {
-        db.createObjectStore("queue", { autoIncrement: true, keyPath: "id" })
+        if (!db.objectStoreNames.contains("queue")) {
+          db.createObjectStore("queue", { autoIncrement: true, keyPath: "id" })
+        }
       },
     })
   }
@@ -72,6 +75,11 @@ window.addEventListener("online", () => {
 })
 
 export async function getQueueLength(): Promise<number> {
-  const db = await getDB()
-  return db.count("queue")
+  try {
+    const db = await getDB()
+    return db.count("queue")
+  } catch {
+    dbPromise = null
+    return 0
+  }
 }

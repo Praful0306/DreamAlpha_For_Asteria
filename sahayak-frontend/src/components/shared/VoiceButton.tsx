@@ -10,24 +10,25 @@ interface VoiceButtonProps {
 }
 
 const LABELS: Record<VoiceState, string> = {
-  idle:       "Tap to speak",
-  recording:  "Recording… tap to stop",
-  processing: "Transcribing…",
-  done:       "Done — tap to record again",
-  error:      "Tap to try again",
+  idle:          "Tap to speak",
+  recording:     "Recording… tap to stop",
+  processing:    "Transcribing…",
+  loading_model: "Loading Whisper AI…",
+  done:          "Done — tap to record again",
+  error:         "Tap to try again",
 }
 
 export function VoiceButton({ onResult, compact = false, className }: VoiceButtonProps) {
-  const { state, error, start, stop, reset } = useVoice(onResult)
+  const { state, error, modelProgress, start, stop, reset } = useVoice(onResult)
 
   function handleClick() {
-    if (state === "recording")                                   stop()
-    else if (state === "idle" || state === "done")               start()
-    else if (state === "error")                                  { reset(); start() }
+    if (state === "recording")                         stop()
+    else if (state === "idle" || state === "done")     start()
+    else if (state === "error")                        { reset(); start() }
   }
 
   const isRecording  = state === "recording"
-  const isProcessing = state === "processing"
+  const isProcessing = state === "processing" || state === "loading_model"
   const isError      = state === "error"
   const size     = compact ? "w-12 h-12" : "w-20 h-20"
   const iconSize = compact ? "w-5 h-5"   : "w-8 h-8"
@@ -67,7 +68,7 @@ export function VoiceButton({ onResult, compact = false, className }: VoiceButto
               ? "bg-brand-500/10 border-brand-500/50 text-brand-400 cursor-not-allowed"
               : isError
               ? "bg-red-500/10 border-red-500/50 text-red-400 hover:border-red-500"
-              : "bg-brand-500/15 border-brand-500 text-brand-400 hover:bg-brand-500/25"
+              : "bg-brand-500/15 border-brand-500 text-brand-400 hover:bg-brand-500/25",
           )}
         >
           {isProcessing ? (
@@ -87,6 +88,24 @@ export function VoiceButton({ onResult, compact = false, className }: VoiceButto
           <p className={cn("text-sm text-center", isError ? "text-red-400" : "text-muted-foreground")}>
             {LABELS[state]}
           </p>
+
+          {/* Whisper model download progress */}
+          {state === "loading_model" && modelProgress > 0 && (
+            <div className="mt-2 space-y-1">
+              <div className="w-48 h-1.5 bg-white/10 rounded-full overflow-hidden mx-auto">
+                <motion.div
+                  className="h-full bg-brand-500 rounded-full"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${modelProgress}%` }}
+                  transition={{ duration: 0.3 }}
+                />
+              </div>
+              <p className="text-xs text-brand-400/70">
+                {modelProgress}% — downloading once, cached for offline use
+              </p>
+            </div>
+          )}
+
           {isError && error && (
             <p className="text-xs text-red-400/70 mt-1 leading-snug">
               {error.startsWith("Demo mode")

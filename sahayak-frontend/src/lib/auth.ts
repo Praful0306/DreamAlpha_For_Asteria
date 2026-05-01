@@ -1,49 +1,75 @@
 /**
- * Sahayak AI — Supabase Auth Helpers
- * Replaces Firebase Auth entirely.
+ * Sahayak AI — Simple Local Auth Helpers
+ * No Supabase — any @gmail.com email can sign in.
  */
-import { createClient } from "@supabase/supabase-js"
 
-const SUPABASE_URL  = (import.meta.env.VITE_SUPABASE_URL  as string) || "https://placeholder.supabase.co"
-const SUPABASE_ANON = (import.meta.env.VITE_SUPABASE_ANON_KEY as string) || "placeholder-anon-key"
+// ── Simple Email Auth (no external provider) ──────────────────────────────────
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON)
+/**
+ * Validates that the email ends with @gmail.com (case-insensitive).
+ * Returns a mock user object on success.
+ */
+export function validateGmailLogin(email: string, password: string) {
+  const trimmed = email.trim().toLowerCase()
+  if (!trimmed.endsWith("@gmail.com")) {
+    throw new Error("Only @gmail.com emails are allowed. Please use a Gmail address.")
+  }
+  if (password.length < 6) {
+    throw new Error("Password must be at least 6 characters.")
+  }
+  // Extract display name from email (before @)
+  const namePart = trimmed.split("@")[0]
+  const displayName = namePart
+    .replace(/[._]/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase())
 
-// ── Email/Password Auth ───────────────────────────────────────────────────────
-
-export async function signUpWithEmail(email: string, password: string, fullName: string) {
-  const { data, error } = await supabase.auth.signUp({
-    email,
-    password,
-    options: { data: { full_name: fullName } },
-  })
-  if (error) throw new Error(error.message)
-  return data
+  return {
+    email: trimmed,
+    name: displayName,
+    id: generateUserId(trimmed),
+  }
 }
 
-export async function signInWithEmail(email: string, password: string) {
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-  if (error) throw new Error(error.message)
-  return data
+/**
+ * Validates that the email ends with @gmail.com for registration.
+ * Returns a mock user object on success.
+ */
+export function validateGmailRegister(email: string, password: string, fullName: string) {
+  const trimmed = email.trim().toLowerCase()
+  if (!trimmed.endsWith("@gmail.com")) {
+    throw new Error("Only @gmail.com emails are allowed. Please use a Gmail address.")
+  }
+  if (password.length < 6) {
+    throw new Error("Password must be at least 6 characters.")
+  }
+  if (fullName.trim().length < 2) {
+    throw new Error("Name must be at least 2 characters.")
+  }
+
+  return {
+    email: trimmed,
+    name: fullName.trim(),
+    id: generateUserId(trimmed),
+  }
 }
 
-// ── Google OAuth ──────────────────────────────────────────────────────────────
-
-export async function signInWithGoogle() {
-  const { data, error } = await supabase.auth.signInWithOAuth({
-    provider: "google",
-    options: {
-      redirectTo: `${window.location.origin}/auth/callback`,
-    },
-  })
-  if (error) throw new Error(error.message)
-  return data
+/**
+ * Generate a deterministic numeric user ID from email.
+ * This ensures the same email always gets the same ID.
+ */
+function generateUserId(email: string): number {
+  let hash = 0
+  for (let i = 0; i < email.length; i++) {
+    const char = email.charCodeAt(i)
+    hash = ((hash << 5) - hash) + char
+    hash = hash & hash // Convert to 32-bit integer
+  }
+  return Math.abs(hash) || 1
 }
 
 // ── Sign Out ──────────────────────────────────────────────────────────────────
 
-export async function signOut() {
-  await supabase.auth.signOut()
+export function signOut() {
   clearSession()
 }
 
@@ -64,4 +90,11 @@ export function clearSession() {
 
 export function getStoredToken(): string | null {
   return localStorage.getItem("sahayak_token")
+}
+
+/**
+ * Generate a simple local token for the session.
+ */
+export function generateLocalToken(email: string, role: string): string {
+  return btoa(JSON.stringify({ email, role, ts: Date.now() }))
 }

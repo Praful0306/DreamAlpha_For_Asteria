@@ -17,6 +17,8 @@ import tempfile
 import socket
 
 logger = logging.getLogger("sahayak.asr")
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_HF_CACHE_DIR = os.path.join(_PROJECT_ROOT, ".hf_cache", "hub")
 
 # ── Language maps ─────────────────────────────────────────────────────────────
 
@@ -122,6 +124,8 @@ def _load_whisper_model():
     model_size = "tiny" if on_render else "small"
     try:
         from faster_whisper import WhisperModel
+        cache_dir = _HF_CACHE_DIR if os.path.isdir(_HF_CACHE_DIR) else None
+        local_only = bool(cache_dir) and not _is_online(timeout=0.5)
         logger.info("Loading faster-whisper %s (int8, CPU)…", model_size)
         _whisper_model = WhisperModel(
             model_size,
@@ -129,6 +133,8 @@ def _load_whisper_model():
             compute_type="int8",
             num_workers=1 if on_render else 2,
             cpu_threads=2 if on_render else 4,
+            download_root=cache_dir,
+            local_files_only=local_only,
         )
         logger.info("faster-whisper %s loaded OK", model_size)
     except Exception as e:

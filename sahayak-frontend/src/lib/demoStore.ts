@@ -90,6 +90,8 @@ export interface DemoAppointment {
   created_at: string
   status: "pending" | "confirmed" | "completed"
   booked_by: "patient" | "asha"
+  is_synced?: boolean
+  doctor_id?: number
 }
 
 export const demoAppointments = {
@@ -99,14 +101,22 @@ export const demoAppointments = {
       ...appt,
       id: Date.now().toString(),
       created_at: new Date().toISOString(),
+      is_synced: false,
     }
     const all = demoAppointments.getAll()
     demoSet("appointments", [newAppt, ...all])
+    dispatchSync()   // notify doctor dashboard instantly
     return newAppt
   },
   updateStatus: (id: string, status: DemoAppointment["status"]): void => {
     const all = demoAppointments.getAll().map(a => a.id === id ? { ...a, status } : a)
     demoSet("appointments", all)
+    dispatchSync()
+  },
+  markSynced: (id: string): void => {
+    const all = demoAppointments.getAll().map(a => a.id === id ? { ...a, is_synced: true } : a)
+    demoSet("appointments", all)
+    dispatchSync()
   },
 }
 
@@ -330,7 +340,7 @@ export function syncReminderToImmunization(
 
 // ── Demo data seed (judges / hackathon demo) ──────────────────────────────────
 
-const DEMO_SEED_KEY = "sahayak_demo_seeded_v3"
+const DEMO_SEED_KEY = "sahayak_demo_seeded_v4"
 
 /**
  * Pre-seeds all demo stores with realistic Indian rural health data.
@@ -376,6 +386,8 @@ export function seedDemoData(): void {
     { id: "m1", name: "Sunita Bai",  age: 24, village: "Rampur",    weeks: 32, edd: "2026-07-20", risk: "LOW",    anc_done: 2, anc_total: 4, ifa_given: true,  tt_done: true,  phone: "9898765432" },
     { id: "m2", name: "Meera Devi",  age: 25, village: "Rampur",    weeks: 20, edd: "2026-09-15", risk: "MEDIUM", anc_done: 1, anc_total: 4, ifa_given: true,  tt_done: false, phone: "9765432109" },
     { id: "m3", name: "Geeta Singh", age: 30, village: "Sultanpur", weeks: 38, edd: "2026-05-10", risk: "HIGH",   anc_done: 3, anc_total: 4, ifa_given: true,  tt_done: true,  phone: "9700123456" },
+    { id: "m4", name: "Lata Sharma", age: 22, village: "Sitapur",   weeks: 14, edd: "2026-11-05", risk: "LOW",    anc_done: 0, anc_total: 4, ifa_given: false, tt_done: false, phone: "9822334455" },
+    { id: "m5", name: "Rekha Yadav", age: 28, village: "Hardoi",    weeks: 28, edd: "2026-08-12", risk: "HIGH",   anc_done: 2, anc_total: 4, ifa_given: true,  tt_done: true,  phone: "9811223344" },
   ])
 
   // ── Tasks / Reminders ─────────────────────────────────────────────────────
@@ -386,6 +398,8 @@ export function seedDemoData(): void {
     { id: "t4", title: "Refer Priya to PHC for hemoglobin <7",    patient: "Priya Devi",  priority: "high",   due: "2026-05-01", done: false },
     { id: "t5", title: "Follow up with Arun Singh after malaria treatment", patient: "Arun Singh", priority: "high", due: "2026-05-04", done: false },
     { id: "t6", title: "Schedule BCG vaccination for newborn",    patient: "Geeta Singh", priority: "medium", due: "2026-05-05", done: false },
+    { id: "t7", title: "Conduct village health sanitation committee meeting", patient: null, priority: "low", due: "2026-05-10", done: false },
+    { id: "t8", title: "Visit Rekha Yadav for blood pressure monitoring", patient: "Rekha Yadav", priority: "high", due: "2026-05-02", done: false },
   ])
 
   // ── Immunization children ────────────────────────────────────────────────
@@ -396,11 +410,25 @@ export function seedDemoData(): void {
       vaccines: { bcg: "done", hepb0: "done", opv0: "done", penta1: "done", opv1: "done", rota1: "done", penta2: "done", opv2: "done", rota2: "due", penta3: "upcoming" } },
   ])
 
-  // ── Appointments ──────────────────────────────────────────────────────────
+  // ── Appointments (use today's date so they show on BOTH patient & doctor) ──
+  const todayDate = new Date().toISOString().slice(0, 10)
+  const tmrw = new Date(); tmrw.setDate(tmrw.getDate() + 1)
+  const tomorrowDate = tmrw.toISOString().slice(0, 10)
   demoSet("appointments", [
-    { id: String(now+10), patient_name: "Priya Devi",   reason: "Dengue follow-up",       preferred_time: "2026-05-01 10:00", phone: "9876543210", status: "confirmed", booked_by: "asha",    created_at: new Date(now - 3*3600000).toISOString() },
-    { id: String(now+11), patient_name: "Rajesh Kumar", reason: "Blood pressure check",   preferred_time: "2026-05-02 11:00", phone: "9812345678", status: "pending",   booked_by: "patient", created_at: new Date(now - 6*3600000).toISOString() },
-    { id: String(now+12), patient_name: "Meera Devi",   reason: "ANC 3rd trimester visit",preferred_time: "2026-05-03 09:00", phone: "9765432109", status: "pending",   booked_by: "asha",    created_at: new Date(now - 1*86400000).toISOString() },
+    { id: String(now+10), patient_name: "Priya Devi",   reason: "Dengue follow-up",        preferred_time: `${todayDate} 10:00`, phone: "9876543210", status: "confirmed", booked_by: "asha",    doctor_id: 999, is_synced: true, created_at: new Date(now - 3*3600000).toISOString() },
+    { id: String(now+11), patient_name: "Rajesh Kumar", reason: "Blood pressure check",    preferred_time: `${todayDate} 11:30`, phone: "9812345678", status: "pending",   booked_by: "patient", doctor_id: 999, is_synced: true, created_at: new Date(now - 6*3600000).toISOString() },
+    { id: String(now+12), patient_name: "Arun Singh",   reason: "Malaria follow-up",       preferred_time: `${todayDate} 14:00`, phone: "9754321098", status: "pending",   booked_by: "asha",    doctor_id: 999, is_synced: true, created_at: new Date(now - 1*86400000).toISOString() },
+    { id: String(now+13), patient_name: "Meera Devi",   reason: "ANC 3rd trimester visit", preferred_time: `${tomorrowDate} 09:00`, phone: "9765432109", status: "pending", booked_by: "asha",   doctor_id: 999, is_synced: true, created_at: new Date(now - 1*86400000).toISOString() },
+    { id: String(now+14), patient_name: "Ravi Prasad",  reason: "Chest pain review",       preferred_time: `${tomorrowDate} 10:30`, phone: "9743210987", status: "pending", booked_by: "patient", doctor_id: 999, is_synced: true, created_at: new Date(now - 2*3600000).toISOString() },
+  ])
+
+  // ── Demo patient reports (so patient dashboard shows vitals & charts) ─────
+  demoSet("patient_reports", [
+    { id: 1001, created_at: new Date(now - 0*86400000).toISOString(), risk_level: "MEDIUM", heart_rate: 88, spo2: 96, temperature: 37.1, bp_systolic: 128, bp_diastolic: 82, diagnosis: "Mild fever, dengue suspected", health_score: 72 },
+    { id: 1002, created_at: new Date(now - 2*86400000).toISOString(), risk_level: "HIGH",   heart_rate: 98, spo2: 94, temperature: 38.2, bp_systolic: 135, bp_diastolic: 88, diagnosis: "High fever, platelet drop",   health_score: 58 },
+    { id: 1003, created_at: new Date(now - 5*86400000).toISOString(), risk_level: "MEDIUM", heart_rate: 82, spo2: 97, temperature: 36.8, bp_systolic: 122, bp_diastolic: 78, diagnosis: "Recovering, monitor vitals",    health_score: 68 },
+    { id: 1004, created_at: new Date(now - 8*86400000).toISOString(), risk_level: "LOW",    heart_rate: 76, spo2: 98, temperature: 36.5, bp_systolic: 118, bp_diastolic: 75, diagnosis: "Normal checkup",              health_score: 82 },
+    { id: 1005, created_at: new Date(now - 12*86400000).toISOString(),risk_level: "LOW",    heart_rate: 72, spo2: 99, temperature: 36.4, bp_systolic: 115, bp_diastolic: 72, diagnosis: "Routine screening",            health_score: 85 },
   ])
 
   localStorage.setItem(DEMO_SEED_KEY, "1")

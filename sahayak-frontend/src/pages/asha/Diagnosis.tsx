@@ -11,7 +11,8 @@ import { Separator } from "@/components/ui/separator"
 import { RiskBadge } from "@/components/shared/RiskBadge"
 import { DiagPipeline, type PipelineStep } from "@/components/shared/DiagPipeline"
 import { VoiceButton } from "@/components/shared/VoiceButton"
-import { diagnose, tts, getMyPatients, generateReferral, type Patient, type DiagnosisResult } from "@/lib/api"
+import { diagnose, getMyPatients, generateReferral, saveReport, type Patient, type DiagnosisResult } from "@/lib/api"
+import { speakText, stopSpeaking } from "@/lib/browserTts"
 import { localDiagnose } from "@/lib/localDiagnose"
 import { ollamaDiagnose } from "@/lib/ollamaDiagnose"
 import { useStore } from "@/store/useStore"
@@ -30,6 +31,29 @@ const LANG_OPTIONS = [
   { value: "gu", label: "ગુજરાતી (Gujarati)" },
   { value: "pa", label: "ਪੰਜਾਬੀ (Punjabi)" },
 ]
+
+const RESULT_LABELS = {
+  en: {
+    summary: "Clinical Summary",
+    actions: "Action Steps",
+    medications: "Medications",
+    redFlags: "Red Flags - Refer Immediately If Present",
+    community: "Community Alert:",
+    speak: "Speak",
+    speaking: "Speaking...",
+    saveReport: "Save Report",
+  },
+  kn: {
+    summary: "ವೈದ್ಯಕೀಯ ಸಾರಾಂಶ",
+    actions: "ಕ್ರಮಗಳು",
+    medications: "ಔಷಧಿಗಳು",
+    redFlags: "ಅಪಾಯದ ಲಕ್ಷಣಗಳು - ಕಂಡರೆ ತಕ್ಷಣ ರೆಫರ್ ಮಾಡಿ",
+    community: "ಸಮುದಾಯ ಎಚ್ಚರಿಕೆ:",
+    speak: "ಕೆಳಿ",
+    speaking: "ಮಾತನಾಡುತ್ತಿದೆ...",
+    saveReport: "ವರದಿ ಉಳಿಸಿ",
+  },
+} as const
 
 export default function AshaDiagnosis() {
   const { user, lang, setLang } = useStore()
@@ -53,6 +77,7 @@ export default function AshaDiagnosis() {
   }, [])
 
   const selectedPatient = patients.find(p => p.id.toString() === patientId)
+  const labels = RESULT_LABELS[lang as keyof typeof RESULT_LABELS] ?? RESULT_LABELS.en
 
   async function handleDiagnose() {
     if (!symptoms.trim()) { toast.error("Describe the patient's symptoms"); return }
@@ -68,7 +93,7 @@ export default function AshaDiagnosis() {
 
       if (isDemoMode()) {
         // Demo mode: Ollama (local NPU) → rule-based fallback
-        res = await _runLocalAI(symptoms, vitals, setLocalModel)
+        res = await _runLocalAI(symptoms, vitals, lang, setLocalModel)
       } else {
         try {
           res = await diagnose({
@@ -85,7 +110,7 @@ export default function AshaDiagnosis() {
             msg.includes("net::ERR") || msg.includes("timed out") || msg.includes("Backend is starting")
           if (isOffline) {
             toast.warning("Backend offline — switching to local AI (AMD NPU)", { duration: 4000 })
-            res = await _runLocalAI(symptoms, vitals, setLocalModel)
+            res = await _runLocalAI(symptoms, vitals, lang, setLocalModel)
           } else {
             throw err
           }
@@ -104,18 +129,11 @@ export default function AshaDiagnosis() {
     }
   }
 
-  async function handleSpeak() {
+  function handleSpeak() {
     if (!result?.clinical_summary) return
+    if (speaking) { stopSpeaking(); setSpeaking(false); return }
     setSpeaking(true)
-    try {
-      const BACKEND = (import.meta.env.VITE_API_URL as string) || ""
-      const res = await tts(result.clinical_summary, lang)
-      const url = `${BACKEND}/${res.file_path.replace(/\\/g, "/")}`
-      const audio = new Audio(url)
-      audio.onended = () => setSpeaking(false)
-      audio.onerror = () => setSpeaking(false)
-      audio.play()
-    } catch { setSpeaking(false) }
+    speakText(result.clinical_summary, lang, () => setSpeaking(false))
   }
 
   async function handleReferral() {
@@ -134,6 +152,40 @@ export default function AshaDiagnosis() {
     } finally {
       setReferring(false)
     }
+  }
+
+  async function handleSaveReport() {
+    if (!result) { toast.error("Run diagnosis first"); return }
+
+    let saved = false
+    if (patientId) {
+      try {
+        await saveReport({
+          patient_id: parseInt(patientId),
+          symptoms,
+          notes: vitals || undefined,
+          diagnosis: result.diagnosis ?? result.disease_name ?? "Diagnosis",
+          medications: result.medications_suggested?.join("; ") ?? undefined,
+          risk_level: result.risk_level,
+          report_title: result.disease_name ?? result.diagnosis ?? "AI Diagnosis",
+          report_type: "AI Diagnosis",
+          is_ai_extracted: 1,
+        })
+        saved = true
+      } catch (err) {
+        toast.warning(err instanceof Error ? `Database save failed: ${err.message}` : "Database save failed")
+      }
+    }
+
+    downloadDiagnosisReport({
+      result,
+      symptoms,
+      vitals,
+      lang,
+      patientName: selectedPatient?.name ?? user?.name ?? "Patient",
+      model: localModel,
+    })
+    toast.success(saved ? "Report saved and downloaded" : "Report downloaded")
   }
 
   const isLoading = step !== "idle" && step !== "result"
@@ -250,10 +302,10 @@ export default function AshaDiagnosis() {
                 {result.clinical_summary && (
                   <div className="bg-white/[0.03] rounded-xl p-4 border border-white/8">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Clinical Summary</span>
+                      <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{labels.summary}</span>
                       <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5 text-gray-500 hover:text-white" onClick={handleSpeak} disabled={speaking}>
                         <Volume2 className={`w-3 h-3 ${speaking ? "text-brand-400 animate-pulse" : ""}`} />
-                        {speaking ? "Speaking…" : "Speak"}
+                        {speaking ? labels.speaking : labels.speak}
                       </Button>
                     </div>
                     <p className="text-sm text-gray-300 leading-relaxed">{result.clinical_summary}</p>
@@ -265,7 +317,7 @@ export default function AshaDiagnosis() {
                     <div>
                       <div className="flex items-center gap-1.5 mb-2">
                         <CheckCircle2 className="w-4 h-4 text-green-500" />
-                        <span className="text-sm font-semibold text-white">Action Steps</span>
+                        <span className="text-sm font-semibold text-white">{labels.actions}</span>
                       </div>
                       <ul className="space-y-1.5">
                         {result.recommendations.map((r, i) => (
@@ -281,7 +333,7 @@ export default function AshaDiagnosis() {
                     <div>
                       <div className="flex items-center gap-1.5 mb-2">
                         <Pill className="w-4 h-4 text-blue-400" />
-                        <span className="text-sm font-semibold text-white">Medications</span>
+                        <span className="text-sm font-semibold text-white">{labels.medications}</span>
                       </div>
                       <ul className="space-y-1.5">
                         {result.medications_suggested.map((m, i) => (
@@ -298,7 +350,7 @@ export default function AshaDiagnosis() {
                   <div className="bg-red-500/10 rounded-xl p-4 border border-red-500/20">
                     <div className="flex items-center gap-1.5 mb-2">
                       <AlertCircle className="w-4 h-4 text-red-400" />
-                      <span className="text-sm font-semibold text-red-300">Red Flags — Refer Immediately If Present</span>
+                      <span className="text-sm font-semibold text-red-300">{labels.redFlags}</span>
                     </div>
                     <ul className="space-y-1">
                       {result.warning_signs.map((w, i) => (
@@ -314,7 +366,7 @@ export default function AshaDiagnosis() {
                   <div className="bg-orange-500/10 rounded-xl p-3 border border-orange-500/20">
                     <div className="flex items-center gap-2 text-sm text-orange-300">
                       <Users className="w-4 h-4 shrink-0" />
-                      <strong>Community Alert:</strong> {result.community_alert}
+                      <strong>{labels.community}</strong> {result.community_alert}
                     </div>
                   </div>
                 )}
@@ -333,8 +385,8 @@ export default function AshaDiagnosis() {
                       {referring ? "Generating…" : "Create Referral"}
                     </Button>
                   )}
-                  <Button variant="outline" className="gap-2 border-white/10 text-gray-400 hover:text-white">
-                    <Download className="w-4 h-4" /> Save Report
+                  <Button variant="outline" className="gap-2 border-white/10 text-gray-400 hover:text-white" onClick={handleSaveReport}>
+                    <Download className="w-4 h-4" /> {labels.saveReport}
                   </Button>
                 </div>
               </CardContent>
@@ -351,18 +403,112 @@ export default function AshaDiagnosis() {
 async function _runLocalAI(
   symptoms: string,
   vitals: string,
+  lang: string,
   setModel: (m: string | null) => void,
 ): Promise<import("@/lib/api").DiagnosisResult> {
   try {
-    const res = await ollamaDiagnose(symptoms, vitals)
+    const res   = await ollamaDiagnose(symptoms, vitals, lang)
     const model = (res as { _model?: string })._model ?? null
     setModel(model)
     const { _model: _m, ...clean } = res as typeof res & { _model?: string }
     return clean
   } catch {
     // Ollama unavailable / timeout → rule-based engine always works
-    const res = localDiagnose(symptoms, vitals)
     setModel(null)
-    return res
+    return localDiagnose(symptoms, vitals)
   }
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;")
+}
+
+function listHtml(items?: string[] | null): string {
+  if (!items?.length) return "<p>None</p>"
+  return `<ul>${items.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+}
+
+function downloadDiagnosisReport(args: {
+  result: DiagnosisResult
+  symptoms: string
+  vitals: string
+  lang: string
+  patientName: string
+  model: string | null
+}) {
+  const { result, symptoms, vitals, lang, patientName, model } = args
+  const title = result.disease_name ?? result.diagnosis ?? "AI Diagnosis"
+  const labels = RESULT_LABELS[lang as keyof typeof RESULT_LABELS] ?? RESULT_LABELS.en
+  const html = `<!doctype html>
+<html lang="${escapeHtml(lang)}">
+<head>
+  <meta charset="utf-8" />
+  <title>Sahayak AI Report - ${escapeHtml(title)}</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Nirmala UI", "Segoe UI", sans-serif; margin: 32px; color: #172033; line-height: 1.5; }
+    .header { border-bottom: 3px solid #f97316; padding-bottom: 12px; margin-bottom: 20px; }
+    h1 { margin: 0 0 6px; font-size: 24px; }
+    h2 { margin-top: 22px; font-size: 16px; color: #334155; }
+    .meta { color: #64748b; font-size: 13px; }
+    .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; background: #fff7ed; color: #c2410c; font-weight: 700; }
+    .section { border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 16px; margin: 12px 0; }
+    ul { margin-top: 8px; padding-left: 22px; }
+    li { margin: 6px 0; }
+    @media print { body { margin: 18mm; } }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Sahayak AI Diagnosis Report</h1>
+    <div class="meta">Generated: ${escapeHtml(new Date().toLocaleString("en-IN"))}</div>
+    <div class="meta">Patient: ${escapeHtml(patientName)} | Language: ${escapeHtml(lang)}${model ? ` | Model: ${escapeHtml(model)}` : ""}</div>
+  </div>
+
+  <h2>${escapeHtml(title)}</h2>
+  <p><span class="badge">${escapeHtml(result.risk_level)}</span> ${result.confidence_pct != null ? `${escapeHtml(result.confidence_pct)}% confidence` : ""}</p>
+
+  <div class="section">
+    <h2>Symptoms</h2>
+    <p>${escapeHtml(symptoms)}</p>
+    ${vitals ? `<h2>Vitals</h2><p>${escapeHtml(vitals)}</p>` : ""}
+  </div>
+
+  <div class="section">
+    <h2>${escapeHtml(labels.summary)}</h2>
+    <p>${escapeHtml(result.clinical_summary)}</p>
+  </div>
+
+  <div class="section">
+    <h2>${escapeHtml(labels.actions)}</h2>
+    ${listHtml(result.recommendations ?? result.action_items)}
+  </div>
+
+  <div class="section">
+    <h2>${escapeHtml(labels.medications)}</h2>
+    ${listHtml(result.medications_suggested)}
+  </div>
+
+  <div class="section">
+    <h2>${escapeHtml(labels.redFlags)}</h2>
+    ${listHtml(result.warning_signs)}
+  </div>
+
+  ${result.community_alert ? `<div class="section"><h2>${escapeHtml(labels.community)}</h2><p>${escapeHtml(result.community_alert)}</p></div>` : ""}
+</body>
+</html>`
+
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = `sahayak_report_${new Date().toISOString().slice(0, 10)}.html`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
 }
