@@ -101,6 +101,26 @@ export function speakText(
   currentAudio = null
   window.speechSynthesis?.cancel()
 
+  // Check demo/offline mode synchronously to preserve user gesture context
+  const isDemo = (() => {
+    try {
+      const raw = localStorage.getItem("sahayak-store")
+      if (raw) {
+        const store = JSON.parse(raw)
+        return (store?.state?.token ?? store?.token) === "demo_token"
+      }
+    } catch {}
+    return false
+  })()
+
+  if (isDemo || !backendBase()) {
+    browserCancel = speakWithBrowser(text, lang, onEnd)
+    return () => {
+      cancelled = true
+      browserCancel?.()
+    }
+  }
+
   ;(async () => {
     try {
       const res = await fetch(backendTtsUrl(), {
