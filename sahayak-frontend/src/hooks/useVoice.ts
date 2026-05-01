@@ -78,20 +78,32 @@ export function useVoice(onResult?: (text: string) => void) {
     }
 
     rec.onerror = (ev) => {
-      if (ev.error === "aborted" || ev.error === "no-speech") {
-        setError("No speech detected — please tap and speak clearly")
-      } else if (ev.error === "not-allowed") {
-        setError("Microphone access denied — please allow microphone in browser settings")
-      } else {
-        // Web Speech failed → try backend fallback via MediaRecorder
-        startMediaRecorder()
+      // Clear the ref immediately so stop() / onend don't race against us
+      speechRec.current = null
+
+      if (ev.error === "aborted") {
+        // Triggered by rec.stop() being called manually — not a real error.
+        // onend will fire right after; let it handle the state transition.
         return
       }
+
+      const ERR_MSGS: Partial<Record<string, string>> = {
+        "no-speech":              "No speech detected — please tap and speak clearly",
+        "not-allowed":            "Microphone access denied — please allow it in browser settings",
+        "network":                "Voice needs internet — please type your symptoms below instead",
+        "language-not-supported": "This language isn't supported offline — switch to English or type below",
+        "service-not-allowed":    "Voice service unavailable — please type your symptoms below",
+        "audio-capture":          "No microphone found — please type your symptoms below",
+      }
+      setError(ERR_MSGS[ev.error] ?? "Voice recognition failed — please type your symptoms below")
       setState("error")
     }
 
     rec.onend = () => {
-      // If still in recording state (no result/error fired), set processing
+      // Only advance to "processing" if we're still in "recording" state —
+      // i.e. recognition ended naturally without an error result yet.
+      // onerror already transitions to "error" or "done", so this is a no-op
+      // in those cases, which is exactly what we want.
       setState((cur) => cur === "recording" ? "processing" : cur)
     }
 

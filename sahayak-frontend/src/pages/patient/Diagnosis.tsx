@@ -12,6 +12,8 @@ import { RiskBadge } from "@/components/shared/RiskBadge"
 import { DiagPipeline, type PipelineStep } from "@/components/shared/DiagPipeline"
 import { VoiceButton } from "@/components/shared/VoiceButton"
 import { diagnose, tts, type DiagnosisResult } from "@/lib/api"
+import { localDiagnose } from "@/lib/localDiagnose"
+import { isDemoMode } from "@/lib/demoStore"
 import { useStore } from "@/store/useStore"
 import { AlertCircle, CheckCircle2, Pill, Clock, Users } from "lucide-react"
 
@@ -39,19 +41,41 @@ export default function PatientDiagnosis() {
     setStep("listen")
     setResult(null)
     try {
-      setStep("transcribe")
-      await new Promise((r) => setTimeout(r, 300))
-      setStep("rag")
-      await new Promise((r) => setTimeout(r, 300))
+      setStep("transcribe"); await new Promise((r) => setTimeout(r, 300))
+      setStep("rag");        await new Promise((r) => setTimeout(r, 300))
       setStep("analyze")
-      const res = await diagnose({
-        symptoms,
-        patient_id: user?.id,
-        patient_name: user?.name,
-        lang,
-      })
-      setStep("clinical")
-      await new Promise((r) => setTimeout(r, 200))
+
+      let res: DiagnosisResult
+
+      if (isDemoMode()) {
+        // Demo / offline: rule-based local engine — no network needed
+        await new Promise((r) => setTimeout(r, 800))
+        res = localDiagnose(symptoms)
+      } else {
+        try {
+          res = await diagnose({
+            symptoms,
+            patient_id: user?.id,
+            patient_name: user?.name,
+            lang,
+          })
+        } catch (err) {
+          // Backend offline / Render sleeping → fall back to local engine
+          const msg = err instanceof Error ? err.message : ""
+          const isOffline = msg.includes("Failed to fetch") || msg.includes("NetworkError") ||
+            msg.includes("net::ERR") || msg.includes("timed out") ||
+            msg.includes("Backend is starting") || msg.includes("Demo mode")
+          if (isOffline) {
+            toast.warning("Backend offline — using local AI diagnosis", { duration: 4000 })
+            await new Promise((r) => setTimeout(r, 600))
+            res = localDiagnose(symptoms)
+          } else {
+            throw err
+          }
+        }
+      }
+
+      setStep("clinical"); await new Promise((r) => setTimeout(r, 200))
       setStep("result")
       setResult(res)
     } catch (err) {
