@@ -12,9 +12,11 @@ import { RiskBadge } from "@/components/shared/RiskBadge"
 import { DiagPipeline, type PipelineStep } from "@/components/shared/DiagPipeline"
 import { VoiceButton } from "@/components/shared/VoiceButton"
 import { diagnose, tts, getMyPatients, generateReferral, type Patient, type DiagnosisResult } from "@/lib/api"
+import { localDiagnose } from "@/lib/localDiagnose"
 import { useStore } from "@/store/useStore"
 import { useEffect } from "react"
 import { AlertCircle, CheckCircle2, Pill, Clock, Users, FileOutput } from "lucide-react"
+import { isDemoMode, demoGet } from "@/lib/demoStore"
 
 const LANG_OPTIONS = [
   { value: "kn", label: "ಕನ್ನಡ (Kannada)" },
@@ -40,7 +42,12 @@ export default function AshaDiagnosis() {
   const [referring, setReferring] = useState(false)
 
   useEffect(() => {
-    getMyPatients().then(setPatients).catch(() => {})
+    if (isDemoMode()) {
+      // Demo mode: load patients from localStorage (seeded by seedDemoData)
+      setPatients(demoGet<Patient[]>("asha_patients", []))
+    } else {
+      getMyPatients().then(setPatients).catch(() => {})
+    }
   }, [])
 
   const selectedPatient = patients.find(p => p.id.toString() === patientId)
@@ -53,13 +60,38 @@ export default function AshaDiagnosis() {
       setStep("transcribe"); await new Promise(r => setTimeout(r, 300))
       setStep("rag");        await new Promise(r => setTimeout(r, 300))
       setStep("analyze")
-      const res = await diagnose({
-        symptoms,
-        patient_id: patientId ? parseInt(patientId) : undefined,
-        patient_name: selectedPatient?.name ?? user?.name,
-        vitals: vitals || undefined,
-        lang,
-      })
+
+      let res: DiagnosisResult
+
+      if (isDemoMode()) {
+        // Demo / offline: run local rule-based engine — no network needed
+        await new Promise(r => setTimeout(r, 800))   // brief pause so pipeline looks natural
+        res = localDiagnose(symptoms, vitals)
+      } else {
+        try {
+          res = await diagnose({
+            symptoms,
+            patient_id: patientId ? parseInt(patientId) : undefined,
+            patient_name: selectedPatient?.name ?? user?.name,
+            vitals: vitals || undefined,
+            lang,
+          })
+        } catch (err) {
+          // Network / backend offline → fall back to local engine
+          const msg = err instanceof Error ? err.message : ""
+          const isOffline = msg.includes("Failed to fetch") || msg.includes("NetworkError") ||
+            msg.includes("net::ERR") || msg.includes("timed out") ||
+            msg.includes("Backend is starting")
+          if (isOffline) {
+            toast.warning("Backend offline — using local AI diagnosis engine", { duration: 4000 })
+            await new Promise(r => setTimeout(r, 600))
+            res = localDiagnose(symptoms, vitals)
+          } else {
+            throw err
+          }
+        }
+      }
+
       setStep("clinical"); await new Promise(r => setTimeout(r, 200))
       setStep("result")
       setResult(res)

@@ -15,21 +15,11 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       proxy: {
-        "/api": {
-          target: "http://localhost:8001",
-          changeOrigin: true,
-          rewrite: (p) => p.replace(/^\/api/, ""),
-        },
-        // Proxy static audio files (TTS output) to the backend
-        "/static": {
-          target: "http://localhost:8001",
-          changeOrigin: true,
-        },
-        // ── Omnidim outbound call dispatch ───────────────────────────────────
-        // Proxied server-side so auth header is injected without CORS issues.
-        // Frontend calls /call-dispatch; Vite forwards to:
-        //   https://backend.omnidim.io/api/v1/calls/dispatch
-        "/call-dispatch": {
+        // ── Omnidim outbound call dispatch (MUST come before /api catch-all) ──
+        // On Vercel production this is handled by api/call-dispatch.ts edge fn.
+        // In local dev Vite proxies /api/call-dispatch here so the key stays
+        // server-side and we avoid browser CORS errors.
+        "/api/call-dispatch": {
           target: "https://backend.omnidim.io",
           changeOrigin: true,
           secure: true,
@@ -42,6 +32,17 @@ export default defineConfig(({ mode }) => {
               proxyReq.setHeader("Accept", "application/json")
             })
           },
+        },
+        // ── Backend API ────────────────────────────────────────────────────────
+        "/api": {
+          target: "http://localhost:8001",
+          changeOrigin: true,
+          rewrite: (p) => p.replace(/^\/api/, ""),
+        },
+        // ── Static audio files (TTS output) ───────────────────────────────────
+        "/static": {
+          target: "http://localhost:8001",
+          changeOrigin: true,
         },
       },
     },
